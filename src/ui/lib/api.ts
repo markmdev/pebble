@@ -39,6 +39,21 @@ export async function removeSource(index: number): Promise<SourcesResponse> {
   return handleResponse<SourcesResponse>(response);
 }
 
+// Worktree detection
+export interface Worktree {
+  path: string;
+  branch: string | null;
+  issuesFile: string | null;
+  hasIssues: boolean;
+  isActive: boolean;
+  issueCount: number;
+}
+
+export async function fetchWorktrees(): Promise<{ worktrees: Worktree[] }> {
+  const response = await fetch(`${API_BASE}/worktrees`);
+  return handleResponse<{ worktrees: Worktree[] }>(response);
+}
+
 export async function fetchIssues(): Promise<Issue[]> {
   const response = await fetch(`${API_BASE}/issues`);
   return handleResponse<Issue[]>(response);

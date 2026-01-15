@@ -55,6 +55,7 @@ import {
 import { EventTimeline } from './EventTimeline';
 import { formatRelativeTime } from '../lib/time';
 import { sortByStatus, sortByDependencies } from '../lib/sort';
+import { getCommonPrefix, getRelativePath } from '../lib/path';
 import {
   updateIssue,
   closeIssue,
@@ -90,6 +91,17 @@ export function IssueDetail({
     () => new Map(allIssues.map((i) => [i.id, i])),
     [allIssues]
   );
+
+  // Compute common prefix for all source paths (for trimming display)
+  const sourcePathPrefix = useMemo(() => {
+    const allSources: string[] = [];
+    for (const iss of allIssues) {
+      if (iss._sources) {
+        allSources.push(...iss._sources);
+      }
+    }
+    return getCommonPrefix(allSources);
+  }, [allIssues]);
 
   // Editing states
   const [editingTitle, setEditingTitle] = useState(false);
@@ -374,7 +386,7 @@ export function IssueDetail({
                 title={issue._sources[0]}
               >
                 <Folder className="h-3 w-3" />
-                <span className="truncate max-w-[300px]">{issue._sources[0]}</span>
+                <span className="truncate max-w-[300px]">{getRelativePath(issue._sources[0], sourcePathPrefix)}</span>
               </div>
             )}
           </div>

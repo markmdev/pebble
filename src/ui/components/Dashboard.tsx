@@ -17,6 +17,7 @@ import {
 import { EventTimeline } from './EventTimeline';
 import type { Issue, IssueEvent, Status, IssueType, Priority } from '../../shared/types';
 import { useTheme } from '../contexts/ThemeContext';
+import { getCommonPrefix, getRelativePath } from '../lib/path';
 
 interface DashboardProps {
   issues: Issue[];
@@ -162,6 +163,36 @@ export function Dashboard({ issues, events, onSelectIssue, onFilterByStatus }: D
       { name: 'Epic', ...data.epic },
       { name: 'Verification', ...data.verification },
     ];
+  }, [issues]);
+
+  // Source distribution data (for multi-worktree mode)
+  const sourceData = useMemo(() => {
+    // Compute common prefix for all source paths
+    const allSources: string[] = [];
+    for (const issue of issues) {
+      if (issue._sources) {
+        allSources.push(...issue._sources);
+      }
+    }
+    const sourcePathPrefix = getCommonPrefix(allSources);
+
+    // Count issues by primary source
+    const counts = new Map<string, number>();
+    for (const issue of issues) {
+      const source = issue._sources?.[0];
+      if (source) {
+        counts.set(source, (counts.get(source) || 0) + 1);
+      }
+    }
+
+    // Convert to array with relative paths for display
+    return Array.from(counts.entries())
+      .map(([source, count]) => ({
+        source,
+        name: getRelativePath(source, sourcePathPrefix),
+        count,
+      }))
+      .sort((a, b) => b.count - a.count); // Sort by count descending
   }, [issues]);
 
   const handleMetricClick = (status: Status) => {
@@ -369,6 +400,38 @@ export function Dashboard({ issues, events, onSelectIssue, onFilterByStatus }: D
           </div>
         </div>
       </div>
+
+      {/* Issues by Source (only show when multiple sources) */}
+      {sourceData.length > 1 && (
+        <div className="bg-card border rounded-lg p-4">
+          <h3 className="text-sm font-medium mb-4">Issues by Source</h3>
+          <div className="h-[200px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={sourceData} layout="vertical">
+                <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} horizontal={false} />
+                <XAxis type="number" axisLine={false} tickLine={false} tick={{ fill: chartColors.text, fontSize: 11 }} />
+                <YAxis
+                  type="category"
+                  dataKey="name"
+                  axisLine={false}
+                  tickLine={false}
+                  tick={{ fill: chartColors.text, fontSize: 11 }}
+                  width={200}
+                />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: chartColors.tooltipBg,
+                    border: `1px solid ${chartColors.tooltipBorder}`,
+                    borderRadius: '6px',
+                  }}
+                  formatter={(value: number) => [value, 'Issues']}
+                />
+                <Bar dataKey="count" fill="#6366f1" radius={[0, 4, 4, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      )}
 
       {/* Live Activity Feed */}
       <div className="bg-card border rounded-lg p-4">

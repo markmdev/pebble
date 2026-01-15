@@ -32,6 +32,7 @@ import { Select } from './ui/select';
 import { Button } from './ui/button';
 import { ArrowUpDown, ChevronRight, ChevronDown, GitBranch, FolderSync, Folder, Search } from 'lucide-react';
 import { cn } from '../lib/utils';
+import { getCommonPrefix, getRelativePath } from '../lib/path';
 
 export type FilterPreset = 'ready' | 'blocked' | 'in_progress' | 'all_open' | 'verifications' | null;
 import { getStatusOrder } from '../lib/sort';
@@ -57,6 +58,8 @@ export interface IssueListProps {
   onExpandedChange?: React.Dispatch<React.SetStateAction<ExpandedState>>;
   activePreset?: FilterPreset;
   onActivePresetChange?: React.Dispatch<React.SetStateAction<FilterPreset>>;
+  sourceFilter?: string;
+  onSourceFilterChange?: React.Dispatch<React.SetStateAction<string>>;
 }
 
 // Extended issue type with subRows for TanStack hierarchy
@@ -180,18 +183,22 @@ export function IssueList({
   onExpandedChange,
   activePreset: activePresetProp,
   onActivePresetChange,
+  sourceFilter: sourceFilterProp,
+  onSourceFilterChange,
 }: IssueListProps) {
   // Unused for now, will be used by BulkActionBar
   void _onClearSelection;
 
   // Internal state (used when props not provided)
   const [sortingInternal, setSortingInternal] = useState<SortingState>([
-    { id: 'updatedAt', desc: true } // Default: newest updates first
+    { id: 'status', desc: false }, // Status first: in_progress → open → blocked → closed
+    { id: 'updatedAt', desc: true } // Then by updatedAt: newest first
   ]);
   const [columnFiltersInternal, setColumnFiltersInternal] = useState<ColumnFiltersState>([]);
   const [globalFilterInternal, setGlobalFilterInternal] = useState('');
   const [expandedInternal, setExpandedInternal] = useState<ExpandedState>(true); // Start expanded
   const [activePresetInternal, setActivePresetInternal] = useState<FilterPreset>(null);
+  const [sourceFilterInternal, setSourceFilterInternal] = useState<string>('');
 
   // Use props if provided, otherwise use internal state
   const sorting = sortingProp ?? sortingInternal;
@@ -204,6 +211,8 @@ export function IssueList({
   const setExpanded = onExpandedChange ?? setExpandedInternal;
   const activePreset = activePresetProp ?? activePresetInternal;
   const setActivePreset = onActivePresetChange ?? setActivePresetInternal;
+  const sourceFilter = sourceFilterProp ?? sourceFilterInternal;
+  const setSourceFilter = onSourceFilterChange ?? setSourceFilterInternal;
 
   // Create lookup map for O(1) issue access
   const issueMap = useMemo(
@@ -221,11 +230,45 @@ export function IssueList({
     return map;
   }, [events]);
 
-  // Apply preset filtering BEFORE hierarchy (fixes preset reactivity)
-  const filteredIssues = useMemo(() => {
-    if (!activePreset) return issues;
+  // Compute common prefix for all source paths (for trimming display)
+  const sourcePathPrefix = useMemo(() => {
+    const allSources: string[] = [];
+    for (const issue of issues) {
+      if (issue._sources) {
+        allSources.push(...issue._sources);
+      }
+    }
+    return getCommonPrefix(allSources);
+  }, [issues]);
 
-    return issues.filter((issue) => {
+  // Compute unique source paths for filter dropdown
+  const uniqueSources = useMemo(() => {
+    const sources = new Set<string>();
+    for (const issue of issues) {
+      if (issue._sources) {
+        for (const src of issue._sources) {
+          sources.add(src);
+        }
+      }
+    }
+    return Array.from(sources).sort();
+  }, [issues]);
+
+  // Apply source and preset filtering BEFORE hierarchy (fixes preset reactivity)
+  const filteredIssues = useMemo(() => {
+    let result = issues;
+
+    // Apply source filter first
+    if (sourceFilter) {
+      result = result.filter((issue) =>
+        issue._sources?.includes(sourceFilter)
+      );
+    }
+
+    // Then apply preset filter
+    if (!activePreset) return result;
+
+    return result.filter((issue) => {
       const hasBlockers = hasOpenBlockers(issue, issueMap);
       switch (activePreset) {
         case 'ready': {
@@ -250,7 +293,7 @@ export function IssueList({
           return true;
       }
     });
-  }, [issues, activePreset, issueMap]);
+  }, [issues, activePreset, issueMap, sourceFilter]);
 
   // Build hierarchical data structure from filtered issues
   const hierarchicalData = useMemo(
@@ -318,61 +361,64 @@ export function IssueList({
         cell: ({ row }) => {
           const canExpand = row.getCanExpand();
           const depth = row.depth;
+          const sources = row.original._sources;
+          const relativePath = sources?.[0] ? getRelativePath(sources[0], sourcePathPrefix) : null;
           return (
-            <div
-              className="flex items-center"
-              style={{ paddingLeft: `${depth * 24}px` }}
-            >
-              {canExpand ? (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    row.toggleExpanded();
-                  }}
-                  className="p-0.5 hover:bg-muted rounded mr-1"
+            <div style={{ paddingLeft: `${depth * 24}px` }}>
+              {/* ID row */}
+              <div className="flex items-center">
+                {canExpand ? (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      row.toggleExpanded();
+                    }}
+                    className="p-0.5 hover:bg-muted rounded mr-1"
+                  >
+                    {row.getIsExpanded() ? (
+                      <ChevronDown className="h-4 w-4" />
+                    ) : (
+                      <ChevronRight className="h-4 w-4" />
+                    )}
+                  </button>
+                ) : depth > 0 ? (
+                  <span className="w-5 mr-1 border-l-2 border-b-2 border-muted h-3 rounded-bl" />
+                ) : (
+                  <span className="w-5 mr-1" />
+                )}
+                <span className="font-mono text-xs">{row.getValue('id')}</span>
+                {onFocusGraph && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onFocusGraph(row.original.id);
+                    }}
+                    className="ml-1 p-0.5 text-muted-foreground hover:text-blue-600 hover:bg-blue-50 rounded"
+                    title="View in graph"
+                  >
+                    <GitBranch className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
+              {/* Source path row */}
+              {relativePath && sources && (
+                <div
+                  className="flex items-center gap-1 text-xs text-muted-foreground mt-0.5"
+                  style={{ paddingLeft: '20px' }}
+                  title={sources[0]}
                 >
-                  {row.getIsExpanded() ? (
-                    <ChevronDown className="h-4 w-4" />
-                  ) : (
-                    <ChevronRight className="h-4 w-4" />
-                  )}
-                </button>
-              ) : depth > 0 ? (
-                <span className="w-5 mr-1 border-l-2 border-b-2 border-muted h-3 rounded-bl" />
-              ) : (
-                <span className="w-5 mr-1" />
-              )}
-              <span className="font-mono text-xs">{row.getValue('id')}</span>
-              {onFocusGraph && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onFocusGraph(row.original.id);
-                  }}
-                  className="ml-1 p-0.5 text-muted-foreground hover:text-blue-600 hover:bg-blue-50 rounded"
-                  title="View in graph"
-                >
-                  <GitBranch className="h-3.5 w-3.5" />
-                </button>
-              )}
-              {/* Source file indicator */}
-              {row.original._sources?.[0] && (
-                <span
-                  className="ml-1 text-xs text-muted-foreground flex items-center gap-0.5"
-                  title={row.original._sources[0]}
-                >
-                  {(row.original._sources.length ?? 0) > 1 ? (
+                  {sources.length > 1 ? (
                     <>
-                      <FolderSync className="h-3 w-3" />
-                      <span>{row.original._sources.length}</span>
+                      <FolderSync className="h-3 w-3 flex-shrink-0" />
+                      <span>{sources.length} sources</span>
                     </>
                   ) : (
                     <>
-                      <Folder className="h-3 w-3" />
-                      <span className="truncate">{row.original._sources[0]}</span>
+                      <Folder className="h-3 w-3 flex-shrink-0" />
+                      <span className="truncate">{relativePath}</span>
                     </>
                   )}
-                </span>
+                </div>
               )}
             </div>
           );
@@ -580,7 +626,7 @@ export function IssueList({
         },
       },
     ],
-    [issues, issueMap, latestEventMap, onSelectIssue, onFocusGraph, selectedIds, onToggleSelect, onSelectAll, visibleIssueIds, allSelected, someSelected]
+    [issues, issueMap, latestEventMap, onSelectIssue, onFocusGraph, selectedIds, onToggleSelect, onSelectAll, visibleIssueIds, allSelected, someSelected, sourcePathPrefix]
   );
 
   const table = useReactTable({
@@ -736,6 +782,19 @@ export function IssueList({
           <option value="3">Low</option>
           <option value="4">Backlog</option>
         </Select>
+        {uniqueSources.length > 1 && (
+          <Select
+            value={sourceFilter}
+            onChange={(e) => setSourceFilter(e.target.value)}
+          >
+            <option value="">All Sources</option>
+            {uniqueSources.map((source) => (
+              <option key={source} value={source}>
+                {getRelativePath(source, sourcePathPrefix)}
+              </option>
+            ))}
+          </Select>
+        )}
       </div>
 
       <div className="rounded-md border">

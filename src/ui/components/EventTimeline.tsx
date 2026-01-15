@@ -5,6 +5,7 @@ import { Select } from './ui/select';
 import { Badge } from './ui/badge';
 import { Clock, Plus, Edit, XCircle, RefreshCw, MessageSquare, Folder, ChevronRight } from 'lucide-react';
 import { formatRelativeTime } from '../lib/time';
+import { getCommonPrefix, getRelativePath } from '../lib/path';
 
 interface EventGroup {
   issueId: string;
@@ -170,6 +171,17 @@ export function EventTimeline({
     [issues]
   );
 
+  // Compute common prefix for all source paths (for trimming display)
+  const sourcePathPrefix = useMemo(() => {
+    const allSources: string[] = [];
+    for (const issue of issues) {
+      if (issue._sources) {
+        allSources.push(...issue._sources);
+      }
+    }
+    return getCommonPrefix(allSources);
+  }, [issues]);
+
   // Pre-filter events by issueIds if provided
   const scopedEvents = useMemo(() => {
     if (!issueIds || issueIds.length === 0) return events;
@@ -331,7 +343,7 @@ export function EventTimeline({
                               title={issue._sources[0]}
                             >
                               <Folder className="h-3 w-3" />
-                              {issue._sources[0]}
+                              {getRelativePath(issue._sources[0], sourcePathPrefix)}
                             </span>
                           )}
                           <Badge variant="secondary" className="text-xs">
@@ -473,7 +485,7 @@ export function EventTimeline({
                                         title={issue._sources[0]}
                                       >
                                         <Folder className="h-3 w-3" />
-                                        {issue._sources[0]}
+                                        {getRelativePath(issue._sources[0], sourcePathPrefix)}
                                       </span>
                                     )}
                                   </>

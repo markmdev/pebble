@@ -11,6 +11,7 @@ import ReactFlow, {
 import 'reactflow/dist/style.css';
 import type { Issue } from '../../shared/types';
 import { GraphLegend } from './GraphLegend';
+import { getCommonPrefix, getRelativePath } from '../lib/path';
 
 interface DependencyGraphProps {
   issues: Issue[];
@@ -115,6 +116,17 @@ function buildGraph(issues: Issue[]): { nodes: Node[]; edges: Edge[] } {
   const edges: Edge[] = [];
   const graphStyles = getGraphStyles();
 
+  // Compute source path prefix for relative path display
+  const allSources: string[] = [];
+  for (const issue of issues) {
+    if (issue._sources) {
+      allSources.push(...issue._sources);
+    }
+  }
+  const sourcePathPrefix = getCommonPrefix(allSources);
+  const uniqueSources = new Set(allSources);
+  const hasMultipleSources = uniqueSources.size > 1;
+
   // Calculate levels for layout
   const levels = new Map<string, number>();
   const visited = new Set<string>();
@@ -181,6 +193,10 @@ function buildGraph(issues: Issue[]): { nodes: Node[]; edges: Edge[] } {
     const y = (indexInLevel - (totalInLevel - 1) / 2) * (nodeHeight + nodeGap) + yOffset;
 
     const statusColor = getStatusColor(issue.status);
+    const sourcePath = hasMultipleSources && issue._sources?.[0]
+      ? getRelativePath(issue._sources[0], sourcePathPrefix)
+      : null;
+
     nodes.push({
       id: issue.id,
       position: { x, y },
@@ -197,6 +213,11 @@ function buildGraph(issues: Issue[]): { nodes: Node[]; edges: Edge[] } {
             >
               {issue.status?.replace('_', ' ') || 'unknown'}
             </div>
+            {sourcePath && (
+              <div className="text-xs mt-1 text-muted-foreground truncate" title={issue._sources?.[0]}>
+                📁 {sourcePath}
+              </div>
+            )}
           </div>
         ),
         issue,

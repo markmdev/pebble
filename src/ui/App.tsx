@@ -43,12 +43,14 @@ function AppContent() {
 
   // Lifted IssueList filter state (persists across tab switches)
   const [listSorting, setListSorting] = useState<SortingState>([
-    { id: 'updatedAt', desc: true }
+    { id: 'status', desc: false },     // in_progress → open → blocked → closed
+    { id: 'updatedAt', desc: true }    // Then newest first
   ]);
   const [listColumnFilters, setListColumnFilters] = useState<ColumnFiltersState>([]);
   const [listGlobalFilter, setListGlobalFilter] = useState('');
   const [listExpanded, setListExpanded] = useState<ExpandedState>(true);
   const [listActivePreset, setListActivePreset] = useState<FilterPreset>(null);
+  const [listSourceFilter, setListSourceFilter] = useState('');
 
   // Lifted HistoryView filter state (persists across tab switches)
   const [historySearchFilter, setHistorySearchFilter] = useState('');
@@ -323,6 +325,8 @@ function AppContent() {
                   onExpandedChange={setListExpanded}
                   activePreset={listActivePreset}
                   onActivePresetChange={setListActivePreset}
+                  sourceFilter={listSourceFilter}
+                  onSourceFilterChange={setListSourceFilter}
                 />
               </>
             )}

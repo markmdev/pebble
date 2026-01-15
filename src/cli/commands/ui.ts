@@ -64,23 +64,27 @@ interface IssueWithSource extends Issue {
   _sources: string[]; // File paths where this issue exists
 }
 
-// Multi-worktree: Event with source tracking
-type IssueEventWithSource = IssueEvent & {
-  _source: string; // File path where this event came from
-};
-
 /**
- * Read events from multiple files and annotate with source
+ * Merge events from multiple files, deduplicating by (issueId, timestamp, type).
+ * Same event appearing in multiple files = keep first occurrence.
  */
-function readEventsFromFiles(filePaths: string[]): IssueEventWithSource[] {
-  const allEvents: IssueEventWithSource[] = [];
+function mergeEventsFromFiles(filePaths: string[]): IssueEvent[] {
+  const merged = new Map<string, IssueEvent>();
+
   for (const filePath of filePaths) {
     const events = readEventsFromFile(filePath);
     for (const event of events) {
-      allEvents.push({ ...event, _source: filePath });
+      const key = `${event.issueId}-${event.timestamp}-${event.type}`;
+      if (!merged.has(key)) {
+        merged.set(key, event);
+      }
     }
   }
-  return allEvents;
+
+  // Sort by timestamp ascending (chronological order)
+  return Array.from(merged.values()).sort(
+    (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+  );
 }
 
 /**
@@ -275,6 +279,76 @@ export function uiCommand(program: Command): void {
           }
         });
 
+        // GET /api/worktrees - Detect git worktrees with .pebble/issues.jsonl
+        app.get('/api/worktrees', (_req, res) => {
+          try {
+            const { execSync } = require('child_process');
+            let worktreeOutput: string;
+            try {
+              worktreeOutput = execSync('git worktree list --porcelain', {
+                encoding: 'utf-8',
+                cwd: process.cwd(),
+              });
+            } catch {
+              // Not a git repo or git not available
+              res.json({ worktrees: [] });
+              return;
+            }
+
+            // Parse porcelain output: each worktree block starts with "worktree <path>"
+            const worktrees: Array<{
+              path: string;
+              branch: string | null;
+              issuesFile: string | null;
+              hasIssues: boolean;
+              isActive: boolean;
+              issueCount: number;
+            }> = [];
+
+            const blocks = worktreeOutput.trim().split('\n\n');
+            for (const block of blocks) {
+              const lines = block.split('\n');
+              let worktreePath = '';
+              let branch: string | null = null;
+
+              for (const line of lines) {
+                if (line.startsWith('worktree ')) {
+                  worktreePath = line.slice('worktree '.length);
+                } else if (line.startsWith('branch ')) {
+                  branch = line.slice('branch '.length).replace('refs/heads/', '');
+                }
+              }
+
+              if (worktreePath) {
+                const issuesFile = path.join(worktreePath, '.pebble', 'issues.jsonl');
+                const hasIssues = fs.existsSync(issuesFile);
+                const isActive = issueFiles.includes(issuesFile);
+
+                // Count issues if the file exists
+                let issueCount = 0;
+                if (hasIssues) {
+                  const events = readEventsFromFile(issuesFile);
+                  const state = computeState(events);
+                  issueCount = state.size;
+                }
+
+                worktrees.push({
+                  path: worktreePath,
+                  branch,
+                  issuesFile: hasIssues ? issuesFile : null,
+                  hasIssues,
+                  isActive,
+                  issueCount,
+                });
+              }
+            }
+
+            res.json({ worktrees });
+          } catch (error) {
+            res.status(500).json({ error: (error as Error).message });
+          }
+        });
+
         app.get('/api/issues', (_req, res) => {
           try {
             // Always read from issueFiles (works for both single and multi-worktree)
@@ -287,8 +361,8 @@ export function uiCommand(program: Command): void {
 
         app.get('/api/events', (_req, res) => {
           try {
-            // Always read from issueFiles (works for both single and multi-worktree)
-            const events = readEventsFromFiles(issueFiles);
+            // Merge and deduplicate events from all sources
+            const events = mergeEventsFromFiles(issueFiles);
             res.json(events);
           } catch (error) {
             res.status(500).json({ error: (error as Error).message });
