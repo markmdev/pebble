@@ -89,6 +89,55 @@ export function formatIssuePretty(issue: Issue): string {
 }
 
 /**
+ * Format a single issue with blocking info for pretty display
+ */
+export function formatIssuePrettyWithBlocking(issue: Issue, blocking: Issue[]): string {
+  const lines: string[] = [];
+
+  lines.push(`${issue.id} - ${issue.title}`);
+  lines.push('─'.repeat(60));
+  lines.push(`Type:     ${formatType(issue.type)}`);
+  lines.push(`Priority: ${formatPriority(issue.priority)}`);
+  lines.push(`Status:   ${formatStatus(issue.status)}`);
+
+  if (issue.parent) {
+    lines.push(`Parent:   ${issue.parent}`);
+  }
+
+  if (issue.description) {
+    lines.push('');
+    lines.push('Description:');
+    lines.push(issue.description);
+  }
+
+  if (issue.blockedBy.length > 0) {
+    lines.push('');
+    lines.push(`Blocked by: ${issue.blockedBy.join(', ')}`);
+  }
+
+  if (blocking.length > 0) {
+    lines.push('');
+    lines.push(`Blocking: ${blocking.map(i => i.id).join(', ')}`);
+  }
+
+  if (issue.comments.length > 0) {
+    lines.push('');
+    lines.push('Comments:');
+    for (const comment of issue.comments) {
+      const author = comment.author ?? 'unknown';
+      const date = new Date(comment.timestamp).toLocaleString();
+      lines.push(`  [${date}] ${author}: ${comment.text}`);
+    }
+  }
+
+  lines.push('');
+  lines.push(`Created: ${new Date(issue.createdAt).toLocaleString()}`);
+  lines.push(`Updated: ${new Date(issue.updatedAt).toLocaleString()}`);
+
+  return lines.join('\n');
+}
+
+/**
  * Format a list of issues as a table
  */
 export function formatIssueListPretty(issues: Issue[]): string {
@@ -229,6 +278,22 @@ export function outputIssue(issue: Issue, pretty: boolean): void {
     console.log(formatIssuePretty(issue));
   } else {
     console.log(formatJson(issue));
+  }
+}
+
+/**
+ * Output an issue with blocking info in the requested format
+ */
+export function outputIssueWithBlocking(issue: Issue, blocking: Issue[], pretty: boolean): void {
+  if (pretty) {
+    console.log(formatIssuePrettyWithBlocking(issue, blocking));
+  } else {
+    // Include blocking IDs in JSON output
+    const output = {
+      ...issue,
+      blocking: blocking.map(i => i.id),
+    };
+    console.log(formatJson(output));
   }
 }
 

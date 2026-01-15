@@ -1,4 +1,5 @@
 import { Command } from 'commander';
+import { getOrCreatePebbleDir } from '../lib/storage.js';
 import { getBlocked } from '../lib/state.js';
 import { outputIssueList, outputError } from '../lib/output.js';
 
@@ -10,6 +11,9 @@ export function blockedCommand(program: Command): void {
       const pretty = program.opts().pretty ?? false;
 
       try {
+        // Auto-init .pebble/ if it doesn't exist
+        getOrCreatePebbleDir();
+
         const issues = getBlocked();
         outputIssueList(issues, pretty);
       } catch (error) {

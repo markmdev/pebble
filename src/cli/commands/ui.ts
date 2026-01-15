@@ -8,7 +8,6 @@ import net from 'net';
 import open from 'open';
 import chokidar from 'chokidar';
 import {
-  getIssues,
   getIssue,
   resolveId,
   hasOpenChildren,
@@ -16,7 +15,6 @@ import {
   computeState,
 } from '../lib/state.js';
 import {
-  readEvents,
   readEventsFromFile,
   getOrCreatePebbleDir,
   appendEvent,
@@ -116,6 +114,47 @@ function mergeIssuesFromFiles(filePaths: string[]): IssueWithSource[] {
     ...issue,
     _sources: Array.from(sources),
   }));
+}
+
+/**
+ * Find an issue by ID across all source files.
+ * Returns the issue and which file to write mutations to.
+ */
+function findIssueInSources(
+  issueId: string,
+  filePaths: string[]
+): { issue: Issue; targetFile: string } | null {
+  // First, try to find by exact ID or prefix match
+  const allIssues = mergeIssuesFromFiles(filePaths);
+
+  // Try exact match first
+  let found = allIssues.find((i) => i.id === issueId);
+
+  // Try prefix match if no exact match
+  if (!found) {
+    const matches = allIssues.filter((i) => i.id.startsWith(issueId));
+    if (matches.length === 1) {
+      found = matches[0];
+    } else if (matches.length > 1) {
+      return null; // Ambiguous
+    }
+  }
+
+  if (!found) {
+    return null;
+  }
+
+  // Use the first source file (where the issue was most recently updated)
+  const targetFile = found._sources[0];
+  return { issue: found, targetFile };
+}
+
+/**
+ * Append an event to a specific file (for multi-worktree mode)
+ */
+function appendEventToFile(event: IssueEvent, filePath: string): void {
+  const line = JSON.stringify(event) + '\n';
+  fs.appendFileSync(filePath, line, 'utf-8');
 }
 
 export function uiCommand(program: Command): void {
@@ -238,13 +277,9 @@ export function uiCommand(program: Command): void {
 
         app.get('/api/issues', (_req, res) => {
           try {
-            if (isMultiWorktree()) {
-              const issues = mergeIssuesFromFiles(issueFiles);
-              res.json(issues);
-            } else {
-              const issues = getIssues({});
-              res.json(issues);
-            }
+            // Always read from issueFiles (works for both single and multi-worktree)
+            const issues = mergeIssuesFromFiles(issueFiles);
+            res.json(issues);
           } catch (error) {
             res.status(500).json({ error: (error as Error).message });
           }
@@ -252,14 +287,9 @@ export function uiCommand(program: Command): void {
 
         app.get('/api/events', (_req, res) => {
           try {
-            if (isMultiWorktree()) {
-              const events = readEventsFromFiles(issueFiles);
-              res.json(events);
-            } else {
-              // readEvents handles missing .pebble gracefully
-              const events = readEvents();
-              res.json(events);
-            }
+            // Always read from issueFiles (works for both single and multi-worktree)
+            const events = readEventsFromFiles(issueFiles);
+            res.json(events);
           } catch (error) {
             res.status(500).json({ error: (error as Error).message });
           }
@@ -533,13 +563,29 @@ export function uiCommand(program: Command): void {
         // PUT /api/issues/:id - Update an issue
         app.put('/api/issues/:id', (req, res) => {
           try {
-            const pebbleDir = getOrCreatePebbleDir();
-            const issueId = resolveId(req.params.id);
-            const issue = getIssue(issueId);
+            let issue: Issue;
+            let issueId: string;
+            let targetFile: string;
 
-            if (!issue) {
-              res.status(404).json({ error: `Issue not found: ${req.params.id}` });
-              return;
+            if (isMultiWorktree()) {
+              const found = findIssueInSources(req.params.id, issueFiles);
+              if (!found) {
+                res.status(404).json({ error: `Issue not found: ${req.params.id}` });
+                return;
+              }
+              issue = found.issue;
+              issueId = issue.id;
+              targetFile = found.targetFile;
+            } else {
+              const pebbleDir = getOrCreatePebbleDir();
+              issueId = resolveId(req.params.id);
+              const localIssue = getIssue(issueId);
+              if (!localIssue) {
+                res.status(404).json({ error: `Issue not found: ${req.params.id}` });
+                return;
+              }
+              issue = localIssue;
+              targetFile = path.join(pebbleDir, 'issues.jsonl');
             }
 
             const { title, type, priority, status, description, parent } = req.body;
@@ -584,14 +630,27 @@ export function uiCommand(program: Command): void {
 
             if (parent !== undefined) {
               if (parent !== null) {
-                const parentIssue = getIssue(parent);
-                if (!parentIssue) {
-                  res.status(400).json({ error: `Parent issue not found: ${parent}` });
-                  return;
-                }
-                if (parentIssue.type !== 'epic') {
-                  res.status(400).json({ error: 'Parent must be an epic' });
-                  return;
+                // In multi-worktree mode, check parent in merged sources
+                if (isMultiWorktree()) {
+                  const parentFound = findIssueInSources(parent, issueFiles);
+                  if (!parentFound) {
+                    res.status(400).json({ error: `Parent issue not found: ${parent}` });
+                    return;
+                  }
+                  if (parentFound.issue.type !== 'epic') {
+                    res.status(400).json({ error: 'Parent must be an epic' });
+                    return;
+                  }
+                } else {
+                  const parentIssue = getIssue(parent);
+                  if (!parentIssue) {
+                    res.status(400).json({ error: `Parent issue not found: ${parent}` });
+                    return;
+                  }
+                  if (parentIssue.type !== 'epic') {
+                    res.status(400).json({ error: 'Parent must be an epic' });
+                    return;
+                  }
                 }
               }
               updates.parent = parent;
@@ -610,9 +669,14 @@ export function uiCommand(program: Command): void {
               data: updates,
             };
 
-            appendEvent(event, pebbleDir);
-            const updatedIssue = getIssue(issueId);
-            res.json(updatedIssue);
+            appendEventToFile(event, targetFile);
+
+            if (isMultiWorktree()) {
+              const updated = findIssueInSources(issueId, issueFiles);
+              res.json(updated?.issue || { ...issue, ...updates, updatedAt: timestamp });
+            } else {
+              res.json(getIssue(issueId));
+            }
           } catch (error) {
             res.status(500).json({ error: (error as Error).message });
           }
@@ -621,13 +685,29 @@ export function uiCommand(program: Command): void {
         // POST /api/issues/:id/close - Close an issue
         app.post('/api/issues/:id/close', (req, res) => {
           try {
-            const pebbleDir = getOrCreatePebbleDir();
-            const issueId = resolveId(req.params.id);
-            const issue = getIssue(issueId);
+            let issue: Issue;
+            let issueId: string;
+            let targetFile: string;
 
-            if (!issue) {
-              res.status(404).json({ error: `Issue not found: ${req.params.id}` });
-              return;
+            if (isMultiWorktree()) {
+              const found = findIssueInSources(req.params.id, issueFiles);
+              if (!found) {
+                res.status(404).json({ error: `Issue not found: ${req.params.id}` });
+                return;
+              }
+              issue = found.issue;
+              issueId = issue.id;
+              targetFile = found.targetFile;
+            } else {
+              const pebbleDir = getOrCreatePebbleDir();
+              issueId = resolveId(req.params.id);
+              const localIssue = getIssue(issueId);
+              if (!localIssue) {
+                res.status(404).json({ error: `Issue not found: ${req.params.id}` });
+                return;
+              }
+              issue = localIssue;
+              targetFile = path.join(pebbleDir, 'issues.jsonl');
             }
 
             if (issue.status === 'closed') {
@@ -635,8 +715,8 @@ export function uiCommand(program: Command): void {
               return;
             }
 
-            // Check if epic has open children
-            if (issue.type === 'epic' && hasOpenChildren(issueId)) {
+            // Check if epic has open children (single-file mode only)
+            if (!isMultiWorktree() && issue.type === 'epic' && hasOpenChildren(issueId)) {
               res.status(400).json({ error: 'Cannot close epic with open children' });
               return;
             }
@@ -651,9 +731,15 @@ export function uiCommand(program: Command): void {
               data: { reason },
             };
 
-            appendEvent(event, pebbleDir);
-            const closedIssue = getIssue(issueId);
-            res.json(closedIssue);
+            appendEventToFile(event, targetFile);
+
+            // Return updated issue
+            if (isMultiWorktree()) {
+              const updated = findIssueInSources(issueId, issueFiles);
+              res.json(updated?.issue || { ...issue, status: 'closed', updatedAt: timestamp });
+            } else {
+              res.json(getIssue(issueId));
+            }
           } catch (error) {
             res.status(500).json({ error: (error as Error).message });
           }
@@ -662,13 +748,29 @@ export function uiCommand(program: Command): void {
         // POST /api/issues/:id/reopen - Reopen an issue
         app.post('/api/issues/:id/reopen', (req, res) => {
           try {
-            const pebbleDir = getOrCreatePebbleDir();
-            const issueId = resolveId(req.params.id);
-            const issue = getIssue(issueId);
+            let issue: Issue;
+            let issueId: string;
+            let targetFile: string;
 
-            if (!issue) {
-              res.status(404).json({ error: `Issue not found: ${req.params.id}` });
-              return;
+            if (isMultiWorktree()) {
+              const found = findIssueInSources(req.params.id, issueFiles);
+              if (!found) {
+                res.status(404).json({ error: `Issue not found: ${req.params.id}` });
+                return;
+              }
+              issue = found.issue;
+              issueId = issue.id;
+              targetFile = found.targetFile;
+            } else {
+              const pebbleDir = getOrCreatePebbleDir();
+              issueId = resolveId(req.params.id);
+              const localIssue = getIssue(issueId);
+              if (!localIssue) {
+                res.status(404).json({ error: `Issue not found: ${req.params.id}` });
+                return;
+              }
+              issue = localIssue;
+              targetFile = path.join(pebbleDir, 'issues.jsonl');
             }
 
             if (issue.status !== 'closed') {
@@ -686,9 +788,14 @@ export function uiCommand(program: Command): void {
               data: { reason },
             };
 
-            appendEvent(event, pebbleDir);
-            const reopenedIssue = getIssue(issueId);
-            res.json(reopenedIssue);
+            appendEventToFile(event, targetFile);
+
+            if (isMultiWorktree()) {
+              const updated = findIssueInSources(issueId, issueFiles);
+              res.json(updated?.issue || { ...issue, status: 'open', updatedAt: timestamp });
+            } else {
+              res.json(getIssue(issueId));
+            }
           } catch (error) {
             res.status(500).json({ error: (error as Error).message });
           }
@@ -697,13 +804,29 @@ export function uiCommand(program: Command): void {
         // POST /api/issues/:id/comments - Add a comment
         app.post('/api/issues/:id/comments', (req, res) => {
           try {
-            const pebbleDir = getOrCreatePebbleDir();
-            const issueId = resolveId(req.params.id);
-            const issue = getIssue(issueId);
+            let issue: Issue;
+            let issueId: string;
+            let targetFile: string;
 
-            if (!issue) {
-              res.status(404).json({ error: `Issue not found: ${req.params.id}` });
-              return;
+            if (isMultiWorktree()) {
+              const found = findIssueInSources(req.params.id, issueFiles);
+              if (!found) {
+                res.status(404).json({ error: `Issue not found: ${req.params.id}` });
+                return;
+              }
+              issue = found.issue;
+              issueId = issue.id;
+              targetFile = found.targetFile;
+            } else {
+              const pebbleDir = getOrCreatePebbleDir();
+              issueId = resolveId(req.params.id);
+              const localIssue = getIssue(issueId);
+              if (!localIssue) {
+                res.status(404).json({ error: `Issue not found: ${req.params.id}` });
+                return;
+              }
+              issue = localIssue;
+              targetFile = path.join(pebbleDir, 'issues.jsonl');
             }
 
             const { text, author } = req.body;
@@ -726,9 +849,14 @@ export function uiCommand(program: Command): void {
               },
             };
 
-            appendEvent(event, pebbleDir);
-            const updatedIssue = getIssue(issueId);
-            res.json(updatedIssue);
+            appendEventToFile(event, targetFile);
+
+            if (isMultiWorktree()) {
+              const updated = findIssueInSources(issueId, issueFiles);
+              res.json(updated?.issue || issue);
+            } else {
+              res.json(getIssue(issueId));
+            }
           } catch (error) {
             res.status(500).json({ error: (error as Error).message });
           }
@@ -737,13 +865,29 @@ export function uiCommand(program: Command): void {
         // POST /api/issues/:id/deps - Add a dependency
         app.post('/api/issues/:id/deps', (req, res) => {
           try {
-            const pebbleDir = getOrCreatePebbleDir();
-            const issueId = resolveId(req.params.id);
-            const issue = getIssue(issueId);
+            let issue: Issue;
+            let issueId: string;
+            let targetFile: string;
 
-            if (!issue) {
-              res.status(404).json({ error: `Issue not found: ${req.params.id}` });
-              return;
+            if (isMultiWorktree()) {
+              const found = findIssueInSources(req.params.id, issueFiles);
+              if (!found) {
+                res.status(404).json({ error: `Issue not found: ${req.params.id}` });
+                return;
+              }
+              issue = found.issue;
+              issueId = issue.id;
+              targetFile = found.targetFile;
+            } else {
+              const pebbleDir = getOrCreatePebbleDir();
+              issueId = resolveId(req.params.id);
+              const localIssue = getIssue(issueId);
+              if (!localIssue) {
+                res.status(404).json({ error: `Issue not found: ${req.params.id}` });
+                return;
+              }
+              issue = localIssue;
+              targetFile = path.join(pebbleDir, 'issues.jsonl');
             }
 
             const { blockerId } = req.body;
@@ -753,12 +897,22 @@ export function uiCommand(program: Command): void {
               return;
             }
 
-            const resolvedBlockerId = resolveId(blockerId);
-            const blockerIssue = getIssue(resolvedBlockerId);
-
-            if (!blockerIssue) {
-              res.status(404).json({ error: `Blocker issue not found: ${blockerId}` });
-              return;
+            // Resolve blocker ID (check in multi-worktree sources if needed)
+            let resolvedBlockerId: string;
+            if (isMultiWorktree()) {
+              const blockerFound = findIssueInSources(blockerId, issueFiles);
+              if (!blockerFound) {
+                res.status(404).json({ error: `Blocker issue not found: ${blockerId}` });
+                return;
+              }
+              resolvedBlockerId = blockerFound.issue.id;
+            } else {
+              resolvedBlockerId = resolveId(blockerId);
+              const blockerIssue = getIssue(resolvedBlockerId);
+              if (!blockerIssue) {
+                res.status(404).json({ error: `Blocker issue not found: ${blockerId}` });
+                return;
+              }
             }
 
             // Check if already a dependency
@@ -767,8 +921,8 @@ export function uiCommand(program: Command): void {
               return;
             }
 
-            // Check for cycles
-            if (detectCycle(issueId, resolvedBlockerId)) {
+            // Check for cycles (only in single-file mode, cycle detection uses local state)
+            if (!isMultiWorktree() && detectCycle(issueId, resolvedBlockerId)) {
               res.status(400).json({ error: 'Adding this dependency would create a cycle' });
               return;
             }
@@ -783,9 +937,14 @@ export function uiCommand(program: Command): void {
               },
             };
 
-            appendEvent(event, pebbleDir);
-            const updatedIssue = getIssue(issueId);
-            res.json(updatedIssue);
+            appendEventToFile(event, targetFile);
+
+            if (isMultiWorktree()) {
+              const updated = findIssueInSources(issueId, issueFiles);
+              res.json(updated?.issue || { ...issue, blockedBy: [...issue.blockedBy, resolvedBlockerId], updatedAt: timestamp });
+            } else {
+              res.json(getIssue(issueId));
+            }
           } catch (error) {
             res.status(500).json({ error: (error as Error).message });
           }
@@ -794,16 +953,44 @@ export function uiCommand(program: Command): void {
         // DELETE /api/issues/:id/deps/:blockerId - Remove a dependency
         app.delete('/api/issues/:id/deps/:blockerId', (req, res) => {
           try {
-            const pebbleDir = getOrCreatePebbleDir();
-            const issueId = resolveId(req.params.id);
-            const issue = getIssue(issueId);
+            let issue: Issue;
+            let issueId: string;
+            let targetFile: string;
 
-            if (!issue) {
-              res.status(404).json({ error: `Issue not found: ${req.params.id}` });
-              return;
+            if (isMultiWorktree()) {
+              const found = findIssueInSources(req.params.id, issueFiles);
+              if (!found) {
+                res.status(404).json({ error: `Issue not found: ${req.params.id}` });
+                return;
+              }
+              issue = found.issue;
+              issueId = issue.id;
+              targetFile = found.targetFile;
+            } else {
+              const pebbleDir = getOrCreatePebbleDir();
+              issueId = resolveId(req.params.id);
+              const localIssue = getIssue(issueId);
+              if (!localIssue) {
+                res.status(404).json({ error: `Issue not found: ${req.params.id}` });
+                return;
+              }
+              issue = localIssue;
+              targetFile = path.join(pebbleDir, 'issues.jsonl');
             }
 
-            const resolvedBlockerId = resolveId(req.params.blockerId);
+            // Resolve blocker ID (check in multi-worktree sources if needed)
+            let resolvedBlockerId: string;
+            if (isMultiWorktree()) {
+              const blockerFound = findIssueInSources(req.params.blockerId, issueFiles);
+              if (blockerFound) {
+                resolvedBlockerId = blockerFound.issue.id;
+              } else {
+                // Blocker might not exist anymore, try direct match
+                resolvedBlockerId = req.params.blockerId;
+              }
+            } else {
+              resolvedBlockerId = resolveId(req.params.blockerId);
+            }
 
             if (!issue.blockedBy.includes(resolvedBlockerId)) {
               res.status(400).json({ error: 'Dependency does not exist' });
@@ -811,18 +998,24 @@ export function uiCommand(program: Command): void {
             }
 
             const timestamp = new Date().toISOString();
+            const newBlockedBy = issue.blockedBy.filter((id) => id !== resolvedBlockerId);
             const event: UpdateEvent = {
               type: 'update',
               issueId,
               timestamp,
               data: {
-                blockedBy: issue.blockedBy.filter((id) => id !== resolvedBlockerId),
+                blockedBy: newBlockedBy,
               },
             };
 
-            appendEvent(event, pebbleDir);
-            const updatedIssue = getIssue(issueId);
-            res.json(updatedIssue);
+            appendEventToFile(event, targetFile);
+
+            if (isMultiWorktree()) {
+              const updated = findIssueInSources(issueId, issueFiles);
+              res.json(updated?.issue || { ...issue, blockedBy: newBlockedBy, updatedAt: timestamp });
+            } else {
+              res.json(getIssue(issueId));
+            }
           } catch (error) {
             res.status(500).json({ error: (error as Error).message });
           }

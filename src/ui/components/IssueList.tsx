@@ -30,10 +30,11 @@ import { Badge } from './ui/badge';
 import { Input } from './ui/input';
 import { Select } from './ui/select';
 import { Button } from './ui/button';
-import { ArrowUpDown, ChevronRight, ChevronDown, GitBranch, FolderSync } from 'lucide-react';
+import { ArrowUpDown, ChevronRight, ChevronDown, GitBranch, FolderSync, Folder, Search } from 'lucide-react';
+import { getAbbreviatedPath } from '../lib/path';
 import { cn } from '../lib/utils';
 
-export type FilterPreset = 'ready' | 'blocked' | 'in_progress' | 'all_open' | null;
+export type FilterPreset = 'ready' | 'blocked' | 'in_progress' | 'all_open' | 'verifications' | null;
 import { getStatusOrder } from '../lib/sort';
 
 export interface IssueListProps {
@@ -80,11 +81,10 @@ function countOpenBlockers(issue: Issue, issueMap: Map<string, Issue>): number {
   }).length;
 }
 
-// Build hierarchical data: epics with children, orphans at top level
+// Build hierarchical data: supports unlimited nesting depth
 function buildHierarchy(issues: Issue[]): IssueWithChildren[] {
   const issueMap = new Map(issues.map((i) => [i.id, i]));
   const childrenByParent = new Map<string, Issue[]>();
-  const topLevel: IssueWithChildren[] = [];
 
   // Group children by parent
   for (const issue of issues) {
@@ -95,29 +95,38 @@ function buildHierarchy(issues: Issue[]): IssueWithChildren[] {
     }
   }
 
-  // Build hierarchy - epics and orphans at top level
-  for (const issue of issues) {
-    // Skip if this issue has a valid parent (it will be nested)
-    if (issue.parent && issueMap.has(issue.parent)) {
-      continue;
-    }
-
+  // Recursively build hierarchy for an issue
+  function buildIssueWithChildren(issue: Issue): IssueWithChildren {
     const children = childrenByParent.get(issue.id) || [];
     // Sort children: open issues first (by status), closed at bottom
     const sortedChildren = [...children].sort((a, b) => {
       return getStatusOrder(a.status) - getStatusOrder(b.status);
     });
 
-    const issueWithChildren: IssueWithChildren = {
+    // Recursively build children's children
+    const subRows = sortedChildren.length > 0
+      ? sortedChildren.map(child => buildIssueWithChildren(child))
+      : undefined;
+
+    return {
       ...issue,
-      subRows: sortedChildren.length > 0 ? sortedChildren as IssueWithChildren[] : undefined,
+      subRows,
     };
-    topLevel.push(issueWithChildren);
   }
 
-  // Sort top level: epics first, then by status
+  // Build top level (issues without parents or with missing parents)
+  const topLevel: IssueWithChildren[] = [];
+  for (const issue of issues) {
+    // Skip if this issue has a valid parent (it will be nested)
+    if (issue.parent && issueMap.has(issue.parent)) {
+      continue;
+    }
+    topLevel.push(buildIssueWithChildren(issue));
+  }
+
+  // Sort top level: issues with children first, then by status
   return topLevel.sort((a, b) => {
-    // Epics with children first
+    // Issues with children first
     const aHasChildren = (a.subRows?.length ?? 0) > 0;
     const bHasChildren = (b.subRows?.length ?? 0) > 0;
     if (aHasChildren !== bHasChildren) {
@@ -220,14 +229,24 @@ export function IssueList({
     return issues.filter((issue) => {
       const hasBlockers = hasOpenBlockers(issue, issueMap);
       switch (activePreset) {
-        case 'ready':
-          return issue.status !== 'closed' && !hasBlockers;
+        case 'ready': {
+          if (issue.status === 'closed') return false;
+          if (hasBlockers) return false;
+          // For verification issues, target must be closed
+          if (issue.type === 'verification' && issue.verifies) {
+            const target = issueMap.get(issue.verifies);
+            if (!target || target.status !== 'closed') return false;
+          }
+          return true;
+        }
         case 'blocked':
           return hasBlockers;
         case 'in_progress':
           return issue.status === 'in_progress';
         case 'all_open':
           return issue.status !== 'closed';
+        case 'verifications':
+          return issue.type === 'verification';
         default:
           return true;
       }
@@ -337,14 +356,23 @@ export function IssueList({
                   <GitBranch className="h-3.5 w-3.5" />
                 </button>
               )}
-              {/* Multi-worktree source indicator */}
-              {((row.original as unknown as { _sources?: string[] })._sources?.length ?? 0) > 1 && (
+              {/* Source file indicator */}
+              {row.original._sources?.[0] && (
                 <span
                   className="ml-1 text-xs text-muted-foreground flex items-center gap-0.5"
-                  title={`In ${(row.original as unknown as { _sources?: string[] })._sources?.length} files`}
+                  title={row.original._sources[0]}
                 >
-                  <FolderSync className="h-3 w-3" />
-                  {(row.original as unknown as { _sources?: string[] })._sources?.length}
+                  {(row.original._sources.length ?? 0) > 1 ? (
+                    <>
+                      <FolderSync className="h-3 w-3" />
+                      <span>{row.original._sources.length}</span>
+                    </>
+                  ) : (
+                    <>
+                      <Folder className="h-3 w-3" />
+                      <span className="max-w-[120px] truncate">{getAbbreviatedPath(row.original._sources[0])}</span>
+                    </>
+                  )}
                 </span>
               )}
             </div>
@@ -364,17 +392,58 @@ export function IssueList({
         ),
         cell: ({ row }) => {
           const blockerCount = countOpenBlockers(row.original, issueMap);
-          const isEpic = row.original.type === 'epic';
-          const children = isEpic
-            ? issues.filter(i => i.parent === row.original.id)
-            : [];
-          const childCount = children.length;
-          const closedCount = children.filter(c => c.status === 'closed').length;
+          // Count all descendants (children + grandchildren + ...) using subRows
+          const countDescendants = (subRows: IssueWithChildren[] | undefined): { total: number; closed: number } => {
+            if (!subRows || subRows.length === 0) return { total: 0, closed: 0 };
+            let total = 0;
+            let closed = 0;
+            for (const child of subRows) {
+              total += 1;
+              if (child.status === 'closed') closed += 1;
+              // Recursively count grandchildren
+              const grandchildren = countDescendants(child.subRows);
+              total += grandchildren.total;
+              closed += grandchildren.closed;
+            }
+            return { total, closed };
+          };
+          const { total: childCount, closed: closedCount } = countDescendants(row.original.subRows);
           const allDone = childCount > 0 && closedCount === childCount;
+          // Check if this is a verification issue
+          const isVerification = row.original.type === 'verification';
+          const verifiesId = row.original.verifies;
+          const verifiesIssue = verifiesId ? issueMap.get(verifiesId) : undefined;
+          const verifiesReady = verifiesIssue?.status === 'closed';
           return (
             <div className="flex items-center gap-2">
               <span className="font-medium">{row.getValue('title')}</span>
-              {isEpic && childCount > 0 && (
+              {/* Verification indicator */}
+              {isVerification && verifiesId && (
+                <span
+                  className={`text-xs px-1.5 py-0.5 rounded flex items-center gap-1 ${
+                    verifiesReady
+                      ? 'bg-cyan-100 text-cyan-700 dark:bg-cyan-950 dark:text-cyan-400'
+                      : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400'
+                  }`}
+                  title={verifiesReady ? 'Target closed - ready to verify' : 'Waiting for target to close'}
+                >
+                  <Search className="h-3 w-3" />
+                  {verifiesIssue ? (
+                    <button
+                      className="hover:underline"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onSelectIssue(verifiesIssue);
+                      }}
+                    >
+                      {verifiesId}
+                    </button>
+                  ) : (
+                    <span>{verifiesId}</span>
+                  )}
+                </span>
+              )}
+              {childCount > 0 && (
                 <span className={`text-xs px-1.5 py-0.5 rounded ${
                   allDone
                     ? 'bg-green-100 text-green-700'
@@ -605,6 +674,14 @@ export function IssueList({
         >
           All Open
         </Button>
+        <Button
+          variant={activePreset === 'verifications' ? 'default' : 'outline'}
+          size="sm"
+          onClick={() => handlePresetClick('verifications')}
+          className={cn(activePreset === 'verifications' && 'bg-cyan-600 hover:bg-cyan-700')}
+        >
+          Verifications
+        </Button>
         {activePreset && (
           <Button
             variant="ghost"
@@ -645,6 +722,7 @@ export function IssueList({
           <option value="task">Task</option>
           <option value="bug">Bug</option>
           <option value="epic">Epic</option>
+          <option value="verification">Verification</option>
         </Select>
         <Select
           value={(table.getColumn('priority')?.getFilterValue() as string) ?? ''}

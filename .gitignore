@@ -39,3 +39,4 @@ npm-debug.log*
 .meridian
 .beads
 test/
+!README.md

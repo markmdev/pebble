@@ -1,6 +1,6 @@
 {
-  "name": "pebble",
-  "version": "0.1.0",
+  "name": "@markmdev/pebble",
+  "version": "0.1.2",
   "description": "A lightweight JSONL-based issue tracker with CLI and React UI",
   "type": "module",
   "main": "dist/cli/index.js",
@@ -24,11 +24,11 @@
     "jsonl",
     "task-management"
   ],
-  "author": "",
+  "author": "markmdev",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/user/pebble"
+    "url": "https://github.com/markmdev/pebble"
   },
   "files": [
     "dist"

@@ -1,4 +1,5 @@
 import { Command } from 'commander';
+import { getOrCreatePebbleDir } from '../lib/storage.js';
 import { getIssue, getIssues, resolveId } from '../lib/state.js';
 import { outputError, formatJson } from '../lib/output.js';
 import type { Issue } from '../../shared/types.js';
@@ -12,6 +13,9 @@ export function graphCommand(program: Command): void {
       const pretty = program.opts().pretty ?? false;
 
       try {
+        // Auto-init .pebble/ if it doesn't exist
+        getOrCreatePebbleDir();
+
         let issues: Issue[];
 
         if (options.root) {

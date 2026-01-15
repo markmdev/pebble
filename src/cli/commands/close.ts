@@ -1,8 +1,8 @@
 import { Command } from 'commander';
 import type { CloseEvent, CommentEvent } from '../../shared/types.js';
 import { getOrCreatePebbleDir, appendEvent } from '../lib/storage.js';
-import { getIssue, resolveId, hasOpenChildren } from '../lib/state.js';
-import { outputMutationSuccess, outputError, formatJson } from '../lib/output.js';
+import { getIssue, resolveId, hasOpenChildren, getNewlyUnblocked } from '../lib/state.js';
+import { outputError, formatJson } from '../lib/output.js';
 
 export function closeCommand(program: Command): void {
   program
@@ -23,7 +23,7 @@ export function closeCommand(program: Command): void {
           throw new Error('No issue IDs provided');
         }
 
-        const results: Array<{ id: string; success: boolean; error?: string }> = [];
+        const results: Array<{ id: string; success: boolean; error?: string; unblocked?: Array<{ id: string; title: string }> }> = [];
 
         for (const id of allIds) {
           try {
@@ -73,7 +73,14 @@ export function closeCommand(program: Command): void {
             };
 
             appendEvent(closeEvent, pebbleDir);
-            results.push({ id: resolvedId, success: true });
+
+            // Get issues that became unblocked
+            const unblocked = getNewlyUnblocked(resolvedId);
+            results.push({
+              id: resolvedId,
+              success: true,
+              unblocked: unblocked.length > 0 ? unblocked.map(i => ({ id: i.id, title: i.title })) : undefined,
+            });
           } catch (error) {
             results.push({ id, success: false, error: (error as Error).message });
           }
@@ -84,7 +91,21 @@ export function closeCommand(program: Command): void {
           // Single issue - output success or error
           const result = results[0];
           if (result.success) {
-            outputMutationSuccess(result.id, pretty);
+            if (pretty) {
+              console.log(`✓ ${result.id}`);
+              if (result.unblocked && result.unblocked.length > 0) {
+                console.log(`\nUnblocked:`);
+                for (const u of result.unblocked) {
+                  console.log(`  → ${u.id} - ${u.title}`);
+                }
+              }
+            } else {
+              console.log(formatJson({
+                id: result.id,
+                success: true,
+                ...(result.unblocked && { unblocked: result.unblocked }),
+              }));
+            }
           } else {
             throw new Error(result.error || 'Unknown error');
           }
@@ -94,6 +115,11 @@ export function closeCommand(program: Command): void {
             for (const result of results) {
               if (result.success) {
                 console.log(`✓ ${result.id}`);
+                if (result.unblocked && result.unblocked.length > 0) {
+                  for (const u of result.unblocked) {
+                    console.log(`  → ${u.id} - ${u.title}`);
+                  }
+                }
               } else {
                 console.log(`✗ ${result.id}: ${result.error}`);
               }
@@ -103,6 +129,7 @@ export function closeCommand(program: Command): void {
               id: r.id,
               success: r.success,
               ...(r.error && { error: r.error }),
+              ...(r.unblocked && { unblocked: r.unblocked }),
             }))));
           }
         }

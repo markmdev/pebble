@@ -3,8 +3,9 @@ import type { IssueEvent, Issue } from '../../shared/types';
 import { Input } from './ui/input';
 import { Select } from './ui/select';
 import { Badge } from './ui/badge';
-import { Clock, Plus, Edit, XCircle, RefreshCw, MessageSquare } from 'lucide-react';
+import { Clock, Plus, Edit, XCircle, RefreshCw, MessageSquare, Folder, ChevronRight } from 'lucide-react';
 import { formatRelativeTime } from '../lib/time';
+import { getAbbreviatedPath } from '../lib/path';
 
 interface EventGroup {
   issueId: string;
@@ -45,6 +46,21 @@ function groupConsecutiveEvents(events: IssueEvent[]): EventGroup[] {
   groups.push(currentGroup);
 
   return groups;
+}
+
+// Get parent chain from issue up to root epic
+function getParentChain(issueId: string, issueMap: Map<string, Issue>): Issue[] {
+  const chain: Issue[] = [];
+  let current = issueMap.get(issueId);
+
+  while (current?.parent) {
+    const parent = issueMap.get(current.parent);
+    if (!parent || chain.includes(parent)) break; // Prevent cycles
+    chain.push(parent);
+    current = parent;
+  }
+
+  return chain; // [immediate parent, grandparent, ..., root]
 }
 
 export interface EventTimelineProps {
@@ -310,6 +326,15 @@ export function EventTimeline({
                               — {issue.title}
                             </span>
                           )}
+                          {issue?._sources?.[0] && (
+                            <span
+                              className="text-xs text-muted-foreground flex items-center gap-0.5"
+                              title={issue._sources[0]}
+                            >
+                              <Folder className="h-3 w-3" />
+                              {getAbbreviatedPath(issue._sources[0])}
+                            </span>
+                          )}
                           <Badge variant="secondary" className="text-xs">
                             {group.events.length} events
                           </Badge>
@@ -370,6 +395,28 @@ export function EventTimeline({
                           )}
                         </div>
                       )}
+                      {/* Parent chain row */}
+                      {(() => {
+                        const parentChain = getParentChain(group.issueId, issueMap);
+                        if (parentChain.length === 0) return null;
+                        const reversed = [...parentChain].reverse(); // root → ... → immediate parent
+                        return (
+                          <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                            <span>Parent:</span>
+                            {reversed.map((parent, idx) => (
+                              <span key={parent.id} className="flex items-center">
+                                {idx > 0 && <ChevronRight className="h-3 w-3 mx-0.5" />}
+                                <button
+                                  className="text-primary hover:underline font-mono"
+                                  onClick={() => onSelectIssue(parent)}
+                                >
+                                  {parent.id}
+                                </button>
+                              </span>
+                            ))}
+                          </div>
+                        );
+                      })()}
                     </div>
                   )}
 
@@ -419,6 +466,15 @@ export function EventTimeline({
                                     {issue && (
                                       <span className="text-sm text-muted-foreground">
                                         — {issue.title}
+                                      </span>
+                                    )}
+                                    {issue?._sources?.[0] && (
+                                      <span
+                                        className="text-xs text-muted-foreground flex items-center gap-0.5"
+                                        title={issue._sources[0]}
+                                      >
+                                        <Folder className="h-3 w-3" />
+                                        {getAbbreviatedPath(issue._sources[0])}
                                       </span>
                                     )}
                                   </>

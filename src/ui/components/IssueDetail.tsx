@@ -47,6 +47,10 @@ import {
   ChevronDown,
   ChevronRight,
   Activity,
+  Folder,
+  Search,
+  AlertCircle,
+  CheckCircle2,
 } from 'lucide-react';
 import { EventTimeline } from './EventTimeline';
 import { formatRelativeTime } from '../lib/time';
@@ -154,6 +158,16 @@ export function IssueDetail({
   }, [allIssues, issue.id, issue.blockedBy]);
 
   const parentIssue = issue.parent ? issueMap.get(issue.parent) : undefined;
+
+  // Verification info
+  const isVerification = issue.type === 'verification';
+  const verifiesIssue = issue.verifies ? issueMap.get(issue.verifies) : undefined;
+  const verifiesReady = verifiesIssue?.status === 'closed';
+
+  // Verifications targeting this issue
+  const pendingVerifications = useMemo(() => {
+    return allIssues.filter(i => i.verifies === issue.id);
+  }, [allIssues, issue.id]);
 
   // Close panel on Escape key
   useEffect(() => {
@@ -352,7 +366,18 @@ export function IssueDetail({
     <div className="fixed top-[65px] bottom-0 right-0 w-[500px] bg-background border-l shadow-lg overflow-y-auto">
       <div className="sticky top-0 bg-background border-b p-4 z-10">
         <div className="flex items-center justify-between mb-2">
-          <span className="font-mono text-sm text-muted-foreground">{issue.id}</span>
+          <div>
+            <span className="font-mono text-sm text-muted-foreground">{issue.id}</span>
+            {issue._sources?.[0] && (
+              <div
+                className="text-xs text-muted-foreground flex items-center gap-1 mt-1"
+                title={issue._sources[0]}
+              >
+                <Folder className="h-3 w-3" />
+                <span className="truncate max-w-[300px]">{issue._sources[0]}</span>
+              </div>
+            )}
+          </div>
           <Button variant="ghost" size="icon" onClick={onClose}>
             <X className="h-4 w-4" />
           </Button>
@@ -558,17 +583,105 @@ export function IssueDetail({
           )}
         </div>
 
-        {/* Parent */}
+        {/* Parent Chain */}
         {parentIssue && (
           <div className="space-y-2">
-            <h3 className="text-sm font-medium">Parent Epic</h3>
-            <button
-              className="text-sm text-primary hover:underline flex items-center gap-1"
-              onClick={() => onSelectIssue(parentIssue)}
+            <h3 className="text-sm font-medium">Parent Chain</h3>
+            {(() => {
+              // Build full parent chain
+              const chain: Issue[] = [];
+              let current: Issue | undefined = issue;
+              while (current?.parent) {
+                const parent = issueMap.get(current.parent);
+                if (!parent || chain.includes(parent)) break;
+                chain.push(parent);
+                current = parent;
+              }
+              const reversed = chain.reverse(); // root → ... → immediate parent
+              return (
+                <div className="flex flex-wrap items-center gap-1 text-sm">
+                  {reversed.map((parent, idx) => (
+                    <span key={parent.id} className="flex items-center">
+                      {idx > 0 && <ChevronRight className="h-4 w-4 text-muted-foreground" />}
+                      <button
+                        className="text-primary hover:underline flex items-center gap-1"
+                        onClick={() => onSelectIssue(parent)}
+                      >
+                        <span className="font-mono">{parent.id}</span>
+                        <span className="text-muted-foreground">— {parent.title}</span>
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              );
+            })()}
+          </div>
+        )}
+
+        {/* Verification Target (for verification issues) */}
+        {isVerification && verifiesIssue && (
+          <div className="space-y-2">
+            <h3 className="text-sm font-medium flex items-center gap-2">
+              <Search className="h-4 w-4" />
+              Verifies
+            </h3>
+            <div
+              className={`p-3 rounded-lg border ${
+                verifiesReady
+                  ? 'bg-cyan-50 border-cyan-200 dark:bg-cyan-950 dark:border-cyan-800'
+                  : 'bg-gray-50 border-gray-200 dark:bg-gray-900 dark:border-gray-700'
+              }`}
             >
-              <span className="font-mono">{parentIssue.id}</span>
-              <span>— {parentIssue.title}</span>
-            </button>
+              <button
+                className="text-left w-full"
+                onClick={() => onSelectIssue(verifiesIssue)}
+              >
+                <span className="font-mono text-xs">{verifiesIssue.id}</span>
+                <span className="mx-2">—</span>
+                <span>{verifiesIssue.title}</span>
+              </button>
+              <div
+                className={`mt-2 text-sm flex items-center gap-1 ${
+                  verifiesReady ? 'text-cyan-700 dark:text-cyan-400' : 'text-gray-600 dark:text-gray-400'
+                }`}
+              >
+                {verifiesReady ? (
+                  <CheckCircle2 className="h-4 w-4" />
+                ) : (
+                  <AlertCircle className="h-4 w-4" />
+                )}
+                {verifiesReady ? 'Target closed — ready to verify' : 'Waiting for target to close'}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Pending Verifications (for regular issues that have verifications) */}
+        {!isVerification && pendingVerifications.length > 0 && (
+          <div className="space-y-2">
+            <h3 className="text-sm font-medium flex items-center gap-2">
+              <Search className="h-4 w-4" />
+              Verifications ({pendingVerifications.length})
+            </h3>
+            <div className="space-y-1">
+              {pendingVerifications.map((v) => (
+                <button
+                  key={v.id}
+                  className="block w-full text-left text-sm hover:bg-muted rounded p-2"
+                  onClick={() => onSelectIssue(v)}
+                >
+                  <span className="font-mono text-xs">{v.id}</span>
+                  <span className="mx-2">—</span>
+                  <span>{v.title}</span>
+                  <Badge
+                    variant={STATUS_BADGE_VARIANTS[v.status]}
+                    className="ml-2 text-xs"
+                  >
+                    {v.status.replace('_', ' ')}
+                  </Badge>
+                </button>
+              ))}
+            </div>
           </div>
         )}
 

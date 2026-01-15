@@ -38,6 +38,7 @@ const TYPE_COLORS: Record<IssueType, string> = {
   task: '#3b82f6', // blue
   bug: '#ef4444', // red
   epic: '#8b5cf6', // purple
+  verification: '#06b6d4', // cyan
 };
 
 // Priority colors (gradient from red to gray)
@@ -119,7 +120,7 @@ export function Dashboard({ issues, events, onSelectIssue, onFilterByStatus }: D
 
   // Type distribution data
   const typeData = useMemo(() => {
-    const counts: Record<IssueType, number> = { task: 0, bug: 0, epic: 0 };
+    const counts: Record<IssueType, number> = { task: 0, bug: 0, epic: 0, verification: 0 };
     for (const issue of issues) {
       counts[issue.type]++;
     }
@@ -127,6 +128,7 @@ export function Dashboard({ issues, events, onSelectIssue, onFilterByStatus }: D
       { name: 'Task', value: counts.task },
       { name: 'Bug', value: counts.bug },
       { name: 'Epic', value: counts.epic },
+      { name: 'Verification', value: counts.verification },
     ].filter((d) => d.value > 0);
   }, [issues]);
 
@@ -149,6 +151,7 @@ export function Dashboard({ issues, events, onSelectIssue, onFilterByStatus }: D
       task: { open: 0, in_progress: 0, blocked: 0, closed: 0 },
       bug: { open: 0, in_progress: 0, blocked: 0, closed: 0 },
       epic: { open: 0, in_progress: 0, blocked: 0, closed: 0 },
+      verification: { open: 0, in_progress: 0, blocked: 0, closed: 0 },
     };
     for (const issue of issues) {
       data[issue.type][issue.status]++;
@@ -157,6 +160,7 @@ export function Dashboard({ issues, events, onSelectIssue, onFilterByStatus }: D
       { name: 'Task', ...data.task },
       { name: 'Bug', ...data.bug },
       { name: 'Epic', ...data.epic },
+      { name: 'Verification', ...data.verification },
     ];
   }, [issues]);
 

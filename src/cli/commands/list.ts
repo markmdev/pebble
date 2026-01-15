@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import type { IssueType, Priority, Status, IssueFilters } from '../../shared/types.js';
 import { ISSUE_TYPES, PRIORITIES, STATUSES } from '../../shared/types.js';
+import { getOrCreatePebbleDir } from '../lib/storage.js';
 import { getIssues, resolveId } from '../lib/state.js';
 import { outputIssueList, outputError } from '../lib/output.js';
 
@@ -16,6 +17,9 @@ export function listCommand(program: Command): void {
       const pretty = program.opts().pretty ?? false;
 
       try {
+        // Auto-init .pebble/ if it doesn't exist
+        getOrCreatePebbleDir();
+
         const filters: IssueFilters = {};
 
         if (options.status !== undefined) {

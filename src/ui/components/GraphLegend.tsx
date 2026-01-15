@@ -84,6 +84,10 @@ export function GraphLegend() {
                   <span className="w-4 text-center">◆</span>
                   <span className="text-sm">Epic</span>
                 </div>
+                <div className="flex items-center gap-2">
+                  <span className="w-4 text-center">🔍</span>
+                  <span className="text-sm">Verification</span>
+                </div>
               </div>
             </div>
 
@@ -144,6 +148,24 @@ export function GraphLegend() {
                     />
                   </svg>
                   <span className="text-sm">Parent-child</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <svg width="32" height="16" className="flex-shrink-0">
+                    <line
+                      x1="2"
+                      y1="8"
+                      x2="30"
+                      y2="8"
+                      stroke="var(--graph-edge-verifies)"
+                      strokeWidth="2"
+                      strokeDasharray="3,2"
+                    />
+                    <polygon
+                      points="30,8 24,4 24,12"
+                      fill="var(--graph-edge-verifies)"
+                    />
+                  </svg>
+                  <span className="text-sm">Verifies</span>
                 </div>
               </div>
             </div>

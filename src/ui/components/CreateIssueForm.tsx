@@ -198,16 +198,11 @@ export function CreateIssueForm({ open, onOpenChange, onCreated, epics }: Create
                   onChange={(e) => setTargetSource(Number(e.target.value))}
                   disabled={loading}
                 >
-                  {sources.files.map((file, index) => {
-                    // Show abbreviated path (last 2 segments)
-                    const parts = file.split('/');
-                    const shortPath = parts.slice(-2).join('/');
-                    return (
-                      <option key={index} value={index}>
-                        {shortPath}
-                      </option>
-                    );
-                  })}
+                  {sources.files.map((file, index) => (
+                    <option key={index} value={index}>
+                      {file}
+                    </option>
+                  ))}
                 </Select>
                 <p className="text-xs text-muted-foreground">
                   Choose which worktree to create the issue in

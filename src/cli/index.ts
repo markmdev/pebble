@@ -16,6 +16,10 @@ import { graphCommand } from './commands/graph.js';
 import { uiCommand } from './commands/ui.js';
 import { importCommand } from './commands/import.js';
 import { mergeCommand } from './commands/merge.js';
+import { summaryCommand } from './commands/summary.js';
+import { historyCommand } from './commands/history.js';
+import { searchCommand } from './commands/search.js';
+import { verificationsCommand } from './commands/verifications.js';
 
 const program = new Command();
 
@@ -25,7 +29,7 @@ program
   .version('0.1.0');
 
 // Global options
-program.option('--pretty', 'Human-readable output (default: JSON)');
+program.option('-P, --pretty', 'Human-readable output (default: JSON)');
 
 // Register all commands
 createCommand(program);
@@ -43,5 +47,9 @@ graphCommand(program);
 uiCommand(program);
 importCommand(program);
 mergeCommand(program);
+summaryCommand(program);
+historyCommand(program);
+searchCommand(program);
+verificationsCommand(program);
 
 program.parse();

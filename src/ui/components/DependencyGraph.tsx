@@ -31,11 +31,12 @@ function getStatusColor(status: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(varName).trim() || '#888';
 }
 
-function getEdgeColor(type: 'blocked' | 'resolved' | 'parent'): string {
+function getEdgeColor(type: 'blocked' | 'resolved' | 'parent' | 'verifies'): string {
   const varName = {
     blocked: '--graph-edge-blocked',
     resolved: '--graph-edge-resolved',
     parent: '--graph-edge-parent',
+    verifies: '--graph-edge-verifies',
   }[type];
   return getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
 }
@@ -54,6 +55,7 @@ const typeIcons: Record<string, string> = {
   task: '◯',
   bug: '🐛',
   epic: '◆',
+  verification: '🔍',
 };
 
 // Get bidirectional dependency neighborhood for an issue
@@ -75,6 +77,10 @@ function getNeighborhood(rootId: string, issues: Issue[]): Set<string> {
       if (issue.parent) {
         traverseUpstream(issue.parent);
       }
+      // Verification target
+      if (issue.verifies) {
+        traverseUpstream(issue.verifies);
+      }
     }
   }
 
@@ -89,6 +95,10 @@ function getNeighborhood(rootId: string, issues: Issue[]): Set<string> {
       }
       // Find children
       if (issue.parent === id) {
+        traverseDownstream(issue.id);
+      }
+      // Find verifications targeting this issue
+      if (issue.verifies === id) {
         traverseDownstream(issue.id);
       }
     }
@@ -238,6 +248,26 @@ function buildGraph(issues: Issue[]): { nodes: Node[]; edges: Edge[] } {
         markerEnd: {
           type: MarkerType.ArrowClosed,
           color: parentEdgeColor,
+        },
+      });
+    }
+  });
+
+  // Create edges for verifies relationships (dashed, cyan)
+  const verifiesEdgeColor = getEdgeColor('verifies');
+  issues.forEach((issue) => {
+    if (issue.verifies && issueMap.has(issue.verifies)) {
+      edges.push({
+        id: `verifies-${issue.id}-${issue.verifies}`,
+        source: issue.id,
+        target: issue.verifies,
+        style: {
+          stroke: verifiesEdgeColor,
+          strokeDasharray: '3,3', // shorter dashes to distinguish from parent
+        },
+        markerEnd: {
+          type: MarkerType.ArrowClosed,
+          color: verifiesEdgeColor,
         },
       });
     }

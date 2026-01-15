@@ -64,8 +64,8 @@ export function mergeCommand(program: Command): void {
     .command('merge <files...>')
     .description('Merge multiple issues.jsonl files into one')
     .option('-o, --output <file>', 'Output file (default: stdout)')
-    .option('--events', 'Output raw events instead of computed state')
-    .option('--show-sources', 'Include _sources field showing which files contained each issue')
+    .option('--state', 'Output computed state instead of raw events')
+    .option('--show-sources', 'Include _sources field (only with --state)')
     .action((files: string[], options) => {
       const pretty = program.opts().pretty ?? false;
 
@@ -88,11 +88,7 @@ export function mergeCommand(program: Command): void {
       try {
         let output: string;
 
-        if (options.events) {
-          // Output merged events as JSONL
-          const events = mergeEvents(filePaths);
-          output = events.map((e) => JSON.stringify(e)).join('\n') + '\n';
-        } else {
+        if (options.state) {
           // Output computed state as JSON array
           const issues = mergeIssues(filePaths);
 
@@ -104,6 +100,10 @@ export function mergeCommand(program: Command): void {
           output = pretty
             ? JSON.stringify(outputIssues, null, 2)
             : JSON.stringify(outputIssues);
+        } else {
+          // Default: output merged events as JSONL (preserves history)
+          const events = mergeEvents(filePaths);
+          output = events.map((e) => JSON.stringify(e)).join('\n');
         }
 
         if (options.output) {

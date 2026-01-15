@@ -33,6 +33,7 @@
     --graph-edge-blocked: #ef4444;
     --graph-edge-resolved: #22c55e;
     --graph-edge-parent: #3b82f6;
+    --graph-edge-verifies: #06b6d4;
     --graph-status-open: #f59e0b;
     --graph-status-in-progress: #3b82f6;
     --graph-status-blocked: #ef4444;
@@ -68,6 +69,7 @@
     --graph-edge-blocked: #f87171;
     --graph-edge-resolved: #4ade80;
     --graph-edge-parent: #60a5fa;
+    --graph-edge-verifies: #22d3ee;
     --graph-status-open: #fbbf24;
     --graph-status-in-progress: #60a5fa;
     --graph-status-blocked: #f87171;
