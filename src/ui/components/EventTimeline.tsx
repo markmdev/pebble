@@ -5,7 +5,6 @@ import { Select } from './ui/select';
 import { Badge } from './ui/badge';
 import { Clock, Plus, Edit, XCircle, RefreshCw, MessageSquare, Folder, ChevronRight } from 'lucide-react';
 import { formatRelativeTime } from '../lib/time';
-import { getAbbreviatedPath } from '../lib/path';
 
 interface EventGroup {
   issueId: string;
@@ -332,7 +331,7 @@ export function EventTimeline({
                               title={issue._sources[0]}
                             >
                               <Folder className="h-3 w-3" />
-                              {getAbbreviatedPath(issue._sources[0])}
+                              {issue._sources[0]}
                             </span>
                           )}
                           <Badge variant="secondary" className="text-xs">
@@ -474,7 +473,7 @@ export function EventTimeline({
                                         title={issue._sources[0]}
                                       >
                                         <Folder className="h-3 w-3" />
-                                        {getAbbreviatedPath(issue._sources[0])}
+                                        {issue._sources[0]}
                                       </span>
                                     )}
                                   </>

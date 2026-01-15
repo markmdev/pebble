@@ -31,7 +31,6 @@ import { Input } from './ui/input';
 import { Select } from './ui/select';
 import { Button } from './ui/button';
 import { ArrowUpDown, ChevronRight, ChevronDown, GitBranch, FolderSync, Folder, Search } from 'lucide-react';
-import { getAbbreviatedPath } from '../lib/path';
 import { cn } from '../lib/utils';
 
 export type FilterPreset = 'ready' | 'blocked' | 'in_progress' | 'all_open' | 'verifications' | null;
@@ -370,7 +369,7 @@ export function IssueList({
                   ) : (
                     <>
                       <Folder className="h-3 w-3" />
-                      <span className="max-w-[120px] truncate">{getAbbreviatedPath(row.original._sources[0])}</span>
+                      <span className="truncate">{row.original._sources[0]}</span>
                     </>
                   )}
                 </span>
