@@ -7,6 +7,7 @@ import {
   detectCycle,
   getBlockers,
   getBlocking,
+  getRelated,
   computeState,
 } from '../lib/state.js';
 import { outputMutationSuccess, outputError, formatDepsPretty, formatJson } from '../lib/output.js';
@@ -113,6 +114,133 @@ export function depCommand(program: Command): void {
       }
     });
 
+  // dep relate <id1> <id2> - bidirectional relationship
+  dep
+    .command('relate <id1> <id2>')
+    .description('Add a bidirectional related link between two issues')
+    .action(async (id1: string, id2: string) => {
+      const pretty = program.opts().pretty ?? false;
+
+      try {
+        const pebbleDir = getOrCreatePebbleDir();
+        const resolvedId1 = resolveId(id1);
+        const resolvedId2 = resolveId(id2);
+
+        const issue1 = getIssue(resolvedId1);
+        if (!issue1) {
+          throw new Error(`Issue not found: ${id1}`);
+        }
+
+        const issue2 = getIssue(resolvedId2);
+        if (!issue2) {
+          throw new Error(`Issue not found: ${id2}`);
+        }
+
+        // Check for self-reference
+        if (resolvedId1 === resolvedId2) {
+          throw new Error('Cannot relate issue to itself');
+        }
+
+        // Check if already related
+        if (issue1.relatedTo.includes(resolvedId2)) {
+          throw new Error(`Issues are already related: ${resolvedId1} ↔ ${resolvedId2}`);
+        }
+
+        const timestamp = new Date().toISOString();
+
+        // Add bidirectional relationship
+        const event1: UpdateEvent = {
+          type: 'update',
+          issueId: resolvedId1,
+          timestamp,
+          data: {
+            relatedTo: [...issue1.relatedTo, resolvedId2],
+          },
+        };
+
+        const event2: UpdateEvent = {
+          type: 'update',
+          issueId: resolvedId2,
+          timestamp,
+          data: {
+            relatedTo: [...issue2.relatedTo, resolvedId1],
+          },
+        };
+
+        appendEvent(event1, pebbleDir);
+        appendEvent(event2, pebbleDir);
+
+        if (pretty) {
+          console.log(`✓ ${resolvedId1} ↔ ${resolvedId2}`);
+        } else {
+          console.log(formatJson({ id1: resolvedId1, id2: resolvedId2, related: true }));
+        }
+      } catch (error) {
+        outputError(error as Error, pretty);
+      }
+    });
+
+  // dep unrelate <id1> <id2> - remove bidirectional relationship
+  dep
+    .command('unrelate <id1> <id2>')
+    .description('Remove a bidirectional related link between two issues')
+    .action(async (id1: string, id2: string) => {
+      const pretty = program.opts().pretty ?? false;
+
+      try {
+        const pebbleDir = getOrCreatePebbleDir();
+        const resolvedId1 = resolveId(id1);
+        const resolvedId2 = resolveId(id2);
+
+        const issue1 = getIssue(resolvedId1);
+        if (!issue1) {
+          throw new Error(`Issue not found: ${id1}`);
+        }
+
+        const issue2 = getIssue(resolvedId2);
+        if (!issue2) {
+          throw new Error(`Issue not found: ${id2}`);
+        }
+
+        // Check if related
+        if (!issue1.relatedTo.includes(resolvedId2)) {
+          throw new Error(`Issues are not related: ${resolvedId1} ↔ ${resolvedId2}`);
+        }
+
+        const timestamp = new Date().toISOString();
+
+        // Remove bidirectional relationship
+        const event1: UpdateEvent = {
+          type: 'update',
+          issueId: resolvedId1,
+          timestamp,
+          data: {
+            relatedTo: issue1.relatedTo.filter((id) => id !== resolvedId2),
+          },
+        };
+
+        const event2: UpdateEvent = {
+          type: 'update',
+          issueId: resolvedId2,
+          timestamp,
+          data: {
+            relatedTo: issue2.relatedTo.filter((id) => id !== resolvedId1),
+          },
+        };
+
+        appendEvent(event1, pebbleDir);
+        appendEvent(event2, pebbleDir);
+
+        if (pretty) {
+          console.log(`✓ ${resolvedId1} ↮ ${resolvedId2}`);
+        } else {
+          console.log(formatJson({ id1: resolvedId1, id2: resolvedId2, related: false }));
+        }
+      } catch (error) {
+        outputError(error as Error, pretty);
+      }
+    });
+
   // dep list <id>
   dep
     .command('list <id>')
@@ -130,14 +258,16 @@ export function depCommand(program: Command): void {
 
         const blockedBy = getBlockers(resolvedId);
         const blocking = getBlocking(resolvedId);
+        const related = getRelated(resolvedId);
 
         if (pretty) {
-          console.log(formatDepsPretty(resolvedId, blockedBy, blocking));
+          console.log(formatDepsPretty(resolvedId, blockedBy, blocking, related));
         } else {
           console.log(formatJson({
             issueId: resolvedId,
             blockedBy: blockedBy.map((i) => ({ id: i.id, title: i.title, status: i.status })),
             blocking: blocking.map((i) => ({ id: i.id, title: i.title, status: i.status })),
+            related: related.map((i) => ({ id: i.id, title: i.title, status: i.status })),
           }));
         }
       } catch (error) {

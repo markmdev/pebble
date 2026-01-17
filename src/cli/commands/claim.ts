@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import type { UpdateEvent } from '../../shared/types.js';
 import { getOrCreatePebbleDir, appendEvent } from '../lib/storage.js';
-import { getIssue, resolveId } from '../lib/state.js';
+import { getIssue, resolveId, hasOpenBlockersById, getOpenBlockers } from '../lib/state.js';
 import { outputMutationSuccess, outputError, formatJson } from '../lib/output.js';
 
 export function claimCommand(program: Command): void {
@@ -40,6 +40,14 @@ export function claimCommand(program: Command): void {
 
             if (issue.status === 'closed') {
               results.push({ id: resolvedId, success: false, error: `Cannot claim closed issue: ${resolvedId}` });
+              continue;
+            }
+
+            // Check if blocked
+            if (hasOpenBlockersById(resolvedId)) {
+              const blockers = getOpenBlockers(resolvedId);
+              const blockerIds = blockers.map(b => b.id).join(', ');
+              results.push({ id: resolvedId, success: false, error: `Cannot claim blocked issue. Blocked by: ${blockerIds}` });
               continue;
             }
 

@@ -46,7 +46,7 @@ function AppContent() {
   ]);
   const [listColumnFilters, setListColumnFilters] = useState<ColumnFiltersState>([]);
   const [listGlobalFilter, setListGlobalFilter] = useState('');
-  const [listExpanded, setListExpanded] = useState<ExpandedState>(true);
+  const [listExpanded, setListExpanded] = useState<ExpandedState>({}); // Start collapsed
   const [listActivePreset, setListActivePreset] = useState<FilterPreset>(null);
   const [listSourceFilter, setListSourceFilter] = useState('');
 

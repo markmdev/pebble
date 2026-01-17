@@ -30,7 +30,7 @@ import { Badge } from './ui/badge';
 import { Input } from './ui/input';
 import { Select } from './ui/select';
 import { Button } from './ui/button';
-import { ArrowUpDown, ChevronRight, ChevronDown, FolderSync, Folder, Search } from 'lucide-react';
+import { ArrowUpDown, ChevronRight, ChevronDown, FolderSync, Folder, Search, X } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { getCommonPrefix, getRelativePath } from '../lib/path';
 
@@ -218,7 +218,7 @@ export function IssueList({
   ]);
   const [columnFiltersInternal, setColumnFiltersInternal] = useState<ColumnFiltersState>([]);
   const [globalFilterInternal, setGlobalFilterInternal] = useState('');
-  const [expandedInternal, setExpandedInternal] = useState<ExpandedState>(true); // Start expanded
+  const [expandedInternal, setExpandedInternal] = useState<ExpandedState>({}); // Start collapsed
   const [activePresetInternal, setActivePresetInternal] = useState<FilterPreset>(null);
   const [sourceFilterInternal, setSourceFilterInternal] = useState<string>('');
 
@@ -494,23 +494,40 @@ export function IssueList({
         ),
         cell: ({ row }) => {
           const blockerCount = countOpenBlockers(row.original, issueMap);
-          // Count all descendants (children + grandchildren + ...) using subRows
-          const countDescendants = (subRows: IssueWithChildren[] | undefined): { total: number; closed: number } => {
-            if (!subRows || subRows.length === 0) return { total: 0, closed: 0 };
+          // Count all descendants, separating regular children from verifications
+          const countDescendants = (subRows: IssueWithChildren[] | undefined): {
+            total: number;
+            closed: number;
+            verificationTotal: number;
+            verificationClosed: number;
+          } => {
+            if (!subRows || subRows.length === 0) {
+              return { total: 0, closed: 0, verificationTotal: 0, verificationClosed: 0 };
+            }
             let total = 0;
             let closed = 0;
+            let verificationTotal = 0;
+            let verificationClosed = 0;
             for (const child of subRows) {
-              total += 1;
-              if (child.status === 'closed') closed += 1;
+              if (child.type === 'verification') {
+                verificationTotal += 1;
+                if (child.status === 'closed') verificationClosed += 1;
+              } else {
+                total += 1;
+                if (child.status === 'closed') closed += 1;
+              }
               // Recursively count grandchildren
               const grandchildren = countDescendants(child.subRows);
               total += grandchildren.total;
               closed += grandchildren.closed;
+              verificationTotal += grandchildren.verificationTotal;
+              verificationClosed += grandchildren.verificationClosed;
             }
-            return { total, closed };
+            return { total, closed, verificationTotal, verificationClosed };
           };
-          const { total: childCount, closed: closedCount } = countDescendants(row.original.subRows);
+          const { total: childCount, closed: closedCount, verificationTotal, verificationClosed } = countDescendants(row.original.subRows);
           const allDone = childCount > 0 && closedCount === childCount;
+          const allVerified = verificationTotal > 0 && verificationClosed === verificationTotal;
           // Check if this is a verification issue
           const isVerification = row.original.type === 'verification';
           const verifiesId = row.original.verifies;
@@ -548,14 +565,23 @@ export function IssueList({
               {childCount > 0 && (
                 <span className={`text-xs px-1.5 py-0.5 rounded ${
                   allDone
-                    ? 'bg-green-100 text-green-700'
-                    : 'bg-purple-100 text-purple-700'
+                    ? 'bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-400'
+                    : 'bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-400'
                 }`}>
                   {closedCount}/{childCount} done
                 </span>
               )}
+              {verificationTotal > 0 && (
+                <span className={`text-xs px-1.5 py-0.5 rounded ${
+                  allVerified
+                    ? 'bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-400'
+                    : 'bg-cyan-100 text-cyan-700 dark:bg-cyan-950 dark:text-cyan-400'
+                }`}>
+                  {verificationClosed}/{verificationTotal} verification{verificationTotal === 1 ? '' : 's'}
+                </span>
+              )}
               {blockerCount > 0 && (
-                <span className="text-xs px-1.5 py-0.5 rounded bg-red-100 text-red-700">
+                <span className="text-xs px-1.5 py-0.5 rounded bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-400">
                   {blockerCount} blocker{blockerCount > 1 ? 's' : ''}
                 </span>
               )}
@@ -704,6 +730,7 @@ export function IssueList({
     getSortedRowModel: getSortedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
     getExpandedRowModel: getExpandedRowModel(),
+    filterFromLeafRows: true, // Search through nested subRows when filtering
     globalFilterFn: (row, _columnId, filterValue) => {
       const issue = row.original;
 
@@ -739,6 +766,16 @@ export function IssueList({
       setColumnFilters([]);
     }
   };
+
+  // Check if any filter is active (for "Clear filters" button visibility)
+  const hasActiveFilters = !!(
+    activePreset ||
+    globalFilter ||
+    sourceFilter ||
+    table.getColumn('status')?.getFilterValue() ||
+    table.getColumn('type')?.getFilterValue() ||
+    table.getColumn('priority')?.getFilterValue()
+  );
 
   return (
     <div className="space-y-4">
@@ -852,6 +889,23 @@ export function IssueList({
             ))}
           </Select>
         )}
+        {/* Clear all filters button - show when any filter is active */}
+        {hasActiveFilters && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setActivePreset(null);
+              setGlobalFilter('');
+              setSourceFilter('');
+              table.resetColumnFilters();
+            }}
+            className="text-muted-foreground hover:text-foreground"
+          >
+            <X className="h-4 w-4 mr-1" />
+            Clear filters
+          </Button>
+        )}
       </div>
 
       <div className="rounded-md border">
@@ -880,6 +934,7 @@ export function IssueList({
                 const statusBorder =
                   status === 'in_progress' ? 'border-l-4 border-l-blue-500' :
                   status === 'blocked' || rowHasOpenBlockers ? 'border-l-4 border-l-red-500' :
+                  status === 'pending_verification' ? 'border-l-4 border-l-purple-500' :
                   status === 'closed' ? 'border-l-4 border-l-green-500' :
                   '';
                 const isClosedRow = status === 'closed';

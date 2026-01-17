@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import type { Priority, Status, UpdateEvent } from '../../shared/types.js';
 import { PRIORITIES, STATUSES } from '../../shared/types.js';
 import { getOrCreatePebbleDir, appendEvent } from '../lib/storage.js';
-import { getIssue, resolveId } from '../lib/state.js';
+import { getIssue, resolveId, hasOpenBlockersById, getOpenBlockers } from '../lib/state.js';
 import { outputMutationSuccess, outputError, formatJson } from '../lib/output.js';
 
 export function updateCommand(program: Command): void {
@@ -94,6 +94,14 @@ export function updateCommand(program: Command): void {
 
             if (!issue) {
               results.push({ id, success: false, error: `Issue not found: ${id}` });
+              continue;
+            }
+
+            // Cannot set status to in_progress if blocked
+            if (data.status === 'in_progress' && hasOpenBlockersById(resolvedId)) {
+              const blockers = getOpenBlockers(resolvedId);
+              const blockerIds = blockers.map(b => b.id).join(', ');
+              results.push({ id: resolvedId, success: false, error: `Cannot set to in_progress - blocked by: ${blockerIds}` });
               continue;
             }
 

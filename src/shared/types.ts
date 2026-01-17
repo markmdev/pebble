@@ -7,7 +7,7 @@ export const PRIORITIES = [0, 1, 2, 3, 4] as const;
 export type Priority = (typeof PRIORITIES)[number];
 
 // Status values
-export const STATUSES = ['open', 'in_progress', 'blocked', 'closed'] as const;
+export const STATUSES = ['open', 'in_progress', 'blocked', 'pending_verification', 'closed'] as const;
 export type Status = (typeof STATUSES)[number];
 
 // Comment interface
@@ -27,6 +27,7 @@ export interface Issue {
   description?: string;
   parent?: string; // ID of parent epic
   blockedBy: string[]; // IDs of blocking issues
+  relatedTo: string[]; // IDs of related issues (bidirectional, non-blocking)
   verifies?: string; // ID of issue this verifies (only for type: verification)
   comments: Comment[];
   createdAt: string; // ISO timestamp
@@ -69,6 +70,7 @@ export interface UpdateEvent extends BaseEvent {
     description?: string;
     parent?: string;
     blockedBy?: string[];
+    relatedTo?: string[];
   };
 }
 
@@ -130,6 +132,7 @@ export const STATUS_LABELS: Record<Status, string> = {
   open: 'Open',
   in_progress: 'In Progress',
   blocked: 'Blocked',
+  pending_verification: 'Pending Verification',
   closed: 'Closed',
 };
 
@@ -149,6 +152,7 @@ export const STATUS_BADGE_VARIANTS: Record<Status, BadgeVariant> = {
   open: 'outline',
   in_progress: 'default',
   blocked: 'destructive',
+  pending_verification: 'default', // Uses warning color via className
   closed: 'secondary',
 };
 

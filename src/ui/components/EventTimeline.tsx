@@ -121,7 +121,30 @@ function formatEventData(event: IssueEvent): string {
 
     case 'update': {
       const changes = Object.entries(event.data)
-        .map(([key, value]) => `${key}: ${JSON.stringify(value)}`)
+        .map(([key, value]) => {
+          // Format specific fields more readably
+          if (key === 'relatedTo' && Array.isArray(value)) {
+            return value.length > 0
+              ? `related to: ${value.join(', ')}`
+              : 'related issues cleared';
+          }
+          if (key === 'blockedBy' && Array.isArray(value)) {
+            return value.length > 0
+              ? `blocked by: ${value.join(', ')}`
+              : 'blockers cleared';
+          }
+          if (key === 'parent') {
+            return value ? `parent: ${value}` : 'parent cleared';
+          }
+          if (key === 'status') {
+            return `status → ${String(value).replace('_', ' ')}`;
+          }
+          if (key === 'priority') {
+            return `priority → ${value}`;
+          }
+          // Default formatting
+          return `${key}: ${JSON.stringify(value)}`;
+        })
         .join(', ');
       return changes || 'No details';
     }

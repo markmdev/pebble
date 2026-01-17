@@ -31,6 +31,7 @@ const STATUS_COLORS: Record<Status, string> = {
   open: '#f59e0b', // amber
   in_progress: '#3b82f6', // blue
   blocked: '#ef4444', // red
+  pending_verification: '#a855f7', // purple
   closed: '#22c55e', // green
 };
 
@@ -73,7 +74,7 @@ export function Dashboard({ issues, events, onSelectIssue, onFilterByStatus }: D
 
   // Compute metrics
   const metrics = useMemo(() => {
-    const counts = { open: 0, in_progress: 0, blocked: 0, closed: 0 };
+    const counts = { open: 0, in_progress: 0, blocked: 0, pending_verification: 0, closed: 0 };
     for (const issue of issues) {
       counts[issue.status]++;
     }
@@ -149,10 +150,10 @@ export function Dashboard({ issues, events, onSelectIssue, onFilterByStatus }: D
   // Status breakdown by type (stacked bar)
   const statusByTypeData = useMemo(() => {
     const data: Record<IssueType, Record<Status, number>> = {
-      task: { open: 0, in_progress: 0, blocked: 0, closed: 0 },
-      bug: { open: 0, in_progress: 0, blocked: 0, closed: 0 },
-      epic: { open: 0, in_progress: 0, blocked: 0, closed: 0 },
-      verification: { open: 0, in_progress: 0, blocked: 0, closed: 0 },
+      task: { open: 0, in_progress: 0, blocked: 0, pending_verification: 0, closed: 0 },
+      bug: { open: 0, in_progress: 0, blocked: 0, pending_verification: 0, closed: 0 },
+      epic: { open: 0, in_progress: 0, blocked: 0, pending_verification: 0, closed: 0 },
+      verification: { open: 0, in_progress: 0, blocked: 0, pending_verification: 0, closed: 0 },
     };
     for (const issue of issues) {
       data[issue.type][issue.status]++;
@@ -204,7 +205,7 @@ export function Dashboard({ issues, events, onSelectIssue, onFilterByStatus }: D
   return (
     <div className="space-y-6">
       {/* Metrics Row */}
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-5 gap-4">
         <MetricCard
           label="Open"
           value={metrics.open}
@@ -222,6 +223,12 @@ export function Dashboard({ issues, events, onSelectIssue, onFilterByStatus }: D
           value={metrics.blocked}
           color={STATUS_COLORS.blocked}
           onClick={() => handleMetricClick('blocked')}
+        />
+        <MetricCard
+          label="Pending Verification"
+          value={metrics.pending_verification}
+          color={STATUS_COLORS.pending_verification}
+          onClick={() => handleMetricClick('pending_verification')}
         />
         <MetricCard
           label="Closed"
@@ -394,6 +401,7 @@ export function Dashboard({ issues, events, onSelectIssue, onFilterByStatus }: D
                 <Bar dataKey="open" stackId="status" fill={STATUS_COLORS.open} name="Open" />
                 <Bar dataKey="in_progress" stackId="status" fill={STATUS_COLORS.in_progress} name="In Progress" />
                 <Bar dataKey="blocked" stackId="status" fill={STATUS_COLORS.blocked} name="Blocked" />
+                <Bar dataKey="pending_verification" stackId="status" fill={STATUS_COLORS.pending_verification} name="Pending Verification" />
                 <Bar dataKey="closed" stackId="status" fill={STATUS_COLORS.closed} name="Closed" />
               </BarChart>
             </ResponsiveContainer>

@@ -80,6 +80,7 @@ export interface UpdateIssueInput {
   status?: Status;
   description?: string;
   parent?: string | null;
+  relatedTo?: string[];
 }
 
 // Mutation endpoints
@@ -146,6 +147,37 @@ export async function removeDependency(id: string, blockerId: string): Promise<I
     { method: 'DELETE' }
   );
   return handleResponse<Issue>(response);
+}
+
+// Related issues (bidirectional, non-blocking relationships)
+export async function addRelated(
+  issueId: string,
+  relatedId: string,
+  currentRelatedTo: string[],
+  relatedIssueRelatedTo: string[]
+): Promise<void> {
+  // Add relatedId to issueId's relatedTo
+  const newRelatedTo1 = [...currentRelatedTo, relatedId];
+  await updateIssue(issueId, { relatedTo: newRelatedTo1 });
+
+  // Add issueId to relatedId's relatedTo (bidirectional)
+  const newRelatedTo2 = [...relatedIssueRelatedTo, issueId];
+  await updateIssue(relatedId, { relatedTo: newRelatedTo2 });
+}
+
+export async function removeRelated(
+  issueId: string,
+  relatedId: string,
+  currentRelatedTo: string[],
+  relatedIssueRelatedTo: string[]
+): Promise<void> {
+  // Remove relatedId from issueId's relatedTo
+  const newRelatedTo1 = currentRelatedTo.filter(id => id !== relatedId);
+  await updateIssue(issueId, { relatedTo: newRelatedTo1 });
+
+  // Remove issueId from relatedId's relatedTo (bidirectional)
+  const newRelatedTo2 = relatedIssueRelatedTo.filter(id => id !== issueId);
+  await updateIssue(relatedId, { relatedTo: newRelatedTo2 });
 }
 
 // Bulk operation types

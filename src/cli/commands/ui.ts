@@ -13,6 +13,7 @@ import {
   hasOpenChildren,
   detectCycle,
   computeState,
+  getVerifications,
 } from '../lib/state.js';
 import {
   readEventsFromFile,
@@ -542,9 +543,30 @@ export function uiCommand(program: Command): void {
                   continue;
                 }
 
+                // Check for pending verifications
+                const pendingVerifications = getVerifications(issueId).filter(v => v.status !== 'closed');
+                const timestamp = new Date().toISOString();
+
+                if (pendingVerifications.length > 0) {
+                  // Move to pending_verification instead of closing
+                  const updateEvent: UpdateEvent = {
+                    type: 'update',
+                    issueId,
+                    timestamp,
+                    data: { status: 'pending_verification' },
+                  };
+                  appendEvent(updateEvent, pebbleDir);
+                  results.push({
+                    id: issueId,
+                    success: true,
+                    error: `Moved to pending_verification (${pendingVerifications.length} verification(s) pending)`,
+                  });
+                  continue;
+                }
+
                 const event: CloseEvent = {
                   issueId,
-                  timestamp: new Date().toISOString(),
+                  timestamp,
                   type: 'close',
                   data: { reason: 'Bulk close' },
                 };
@@ -583,7 +605,7 @@ export function uiCommand(program: Command): void {
 
             // Validate status if provided
             if (updates.status) {
-              const validStatuses = ['open', 'in_progress', 'blocked'];
+              const validStatuses = ['open', 'in_progress', 'blocked', 'pending_verification'];
               if (!validStatuses.includes(updates.status)) {
                 res.status(400).json({
                   error: `Invalid status: ${updates.status}. Use close endpoint to close issues.`,
@@ -662,7 +684,7 @@ export function uiCommand(program: Command): void {
               targetFile = path.join(pebbleDir, 'issues.jsonl');
             }
 
-            const { title, type, priority, status, description, parent } = req.body;
+            const { title, type, priority, status, description, parent, relatedTo } = req.body;
             const updates: UpdateEvent['data'] = {};
 
             // Validate and collect updates
@@ -728,6 +750,30 @@ export function uiCommand(program: Command): void {
                 }
               }
               updates.parent = parent;
+            }
+
+            if (relatedTo !== undefined) {
+              if (!Array.isArray(relatedTo)) {
+                res.status(400).json({ error: 'relatedTo must be an array' });
+                return;
+              }
+              // Validate all related IDs exist
+              for (const relatedId of relatedTo) {
+                if (isMultiWorktree()) {
+                  const found = findIssueInSources(relatedId, issueFiles);
+                  if (!found) {
+                    res.status(400).json({ error: `Related issue not found: ${relatedId}` });
+                    return;
+                  }
+                } else {
+                  const relatedIssue = getIssue(relatedId);
+                  if (!relatedIssue) {
+                    res.status(400).json({ error: `Related issue not found: ${relatedId}` });
+                    return;
+                  }
+                }
+              }
+              updates.relatedTo = relatedTo;
             }
 
             if (Object.keys(updates).length === 0) {
@@ -797,6 +843,37 @@ export function uiCommand(program: Command): void {
 
             const { reason } = req.body;
             const timestamp = new Date().toISOString();
+
+            // Check for pending verifications
+            let pendingVerifications: Issue[] = [];
+            if (isMultiWorktree()) {
+              // In multi-worktree mode, find verifications across all sources
+              const allIssues = mergeIssuesFromFiles(issueFiles);
+              pendingVerifications = allIssues.filter(
+                i => i.verifies === issueId && i.status !== 'closed'
+              );
+            } else {
+              pendingVerifications = getVerifications(issueId).filter(v => v.status !== 'closed');
+            }
+
+            if (pendingVerifications.length > 0) {
+              // Move to pending_verification instead of closed
+              const updateEvent: UpdateEvent = {
+                type: 'update',
+                issueId,
+                timestamp,
+                data: { status: 'pending_verification' },
+              };
+              appendEventToFile(updateEvent, targetFile);
+
+              // Return updated issue with info about pending verifications
+              const updatedIssue = { ...issue, status: 'pending_verification' as const, updatedAt: timestamp };
+              res.json({
+                ...updatedIssue,
+                _pendingVerifications: pendingVerifications.map(v => ({ id: v.id, title: v.title })),
+              });
+              return;
+            }
 
             const event: CloseEvent = {
               type: 'close',

@@ -22,6 +22,7 @@ function getStatusColor(status: Status): string {
     open: 'bg-amber-500',
     in_progress: 'bg-blue-500',
     blocked: 'bg-red-500',
+    pending_verification: 'bg-purple-500',
     closed: 'bg-green-500',
   };
   return colors[status] || 'bg-gray-500';

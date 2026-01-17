@@ -1,7 +1,7 @@
 import { Command } from 'commander';
-import type { CloseEvent, CommentEvent } from '../../shared/types.js';
+import type { CloseEvent, CommentEvent, UpdateEvent } from '../../shared/types.js';
 import { getOrCreatePebbleDir, appendEvent } from '../lib/storage.js';
-import { getIssue, resolveId, hasOpenChildren, getNewlyUnblocked } from '../lib/state.js';
+import { getIssue, resolveId, hasOpenChildren, getNewlyUnblocked, getVerifications } from '../lib/state.js';
 import { outputError, formatJson } from '../lib/output.js';
 
 export function closeCommand(program: Command): void {
@@ -23,7 +23,14 @@ export function closeCommand(program: Command): void {
           throw new Error('No issue IDs provided');
         }
 
-        const results: Array<{ id: string; success: boolean; error?: string; unblocked?: Array<{ id: string; title: string }> }> = [];
+        const results: Array<{
+          id: string;
+          success: boolean;
+          error?: string;
+          status?: 'closed' | 'pending_verification';
+          pendingVerifications?: Array<{ id: string; title: string }>;
+          unblocked?: Array<{ id: string; title: string }>;
+        }> = [];
 
         for (const id of allIds) {
           try {
@@ -62,7 +69,32 @@ export function closeCommand(program: Command): void {
               appendEvent(commentEvent, pebbleDir);
             }
 
-            // Then close
+            // Check for pending verifications
+            const pendingVerifications = getVerifications(resolvedId)
+              .filter(v => v.status !== 'closed');
+
+            if (pendingVerifications.length > 0) {
+              // Move to pending_verification instead of closed
+              const updateEvent: UpdateEvent = {
+                type: 'update',
+                issueId: resolvedId,
+                timestamp,
+                data: {
+                  status: 'pending_verification',
+                },
+              };
+              appendEvent(updateEvent, pebbleDir);
+
+              results.push({
+                id: resolvedId,
+                success: true,
+                status: 'pending_verification',
+                pendingVerifications: pendingVerifications.map(v => ({ id: v.id, title: v.title })),
+              });
+              continue;
+            }
+
+            // No pending verifications - close normally
             const closeEvent: CloseEvent = {
               type: 'close',
               issueId: resolvedId,
@@ -79,6 +111,7 @@ export function closeCommand(program: Command): void {
             results.push({
               id: resolvedId,
               success: true,
+              status: 'closed',
               unblocked: unblocked.length > 0 ? unblocked.map(i => ({ id: i.id, title: i.title })) : undefined,
             });
           } catch (error) {
@@ -92,17 +125,27 @@ export function closeCommand(program: Command): void {
           const result = results[0];
           if (result.success) {
             if (pretty) {
-              console.log(`✓ ${result.id}`);
-              if (result.unblocked && result.unblocked.length > 0) {
-                console.log(`\nUnblocked:`);
-                for (const u of result.unblocked) {
-                  console.log(`  → ${u.id} - ${u.title}`);
+              if (result.status === 'pending_verification') {
+                console.log(`⏳ ${result.id} → pending_verification`);
+                console.log(`\nPending verifications:`);
+                for (const v of result.pendingVerifications || []) {
+                  console.log(`  • ${v.id} - ${v.title}`);
+                }
+              } else {
+                console.log(`✓ ${result.id}`);
+                if (result.unblocked && result.unblocked.length > 0) {
+                  console.log(`\nUnblocked:`);
+                  for (const u of result.unblocked) {
+                    console.log(`  → ${u.id} - ${u.title}`);
+                  }
                 }
               }
             } else {
               console.log(formatJson({
                 id: result.id,
                 success: true,
+                status: result.status,
+                ...(result.pendingVerifications && { pendingVerifications: result.pendingVerifications }),
                 ...(result.unblocked && { unblocked: result.unblocked }),
               }));
             }
@@ -114,10 +157,17 @@ export function closeCommand(program: Command): void {
           if (pretty) {
             for (const result of results) {
               if (result.success) {
-                console.log(`✓ ${result.id}`);
-                if (result.unblocked && result.unblocked.length > 0) {
-                  for (const u of result.unblocked) {
-                    console.log(`  → ${u.id} - ${u.title}`);
+                if (result.status === 'pending_verification') {
+                  console.log(`⏳ ${result.id} → pending_verification`);
+                  for (const v of result.pendingVerifications || []) {
+                    console.log(`  • ${v.id} - ${v.title}`);
+                  }
+                } else {
+                  console.log(`✓ ${result.id}`);
+                  if (result.unblocked && result.unblocked.length > 0) {
+                    for (const u of result.unblocked) {
+                      console.log(`  → ${u.id} - ${u.title}`);
+                    }
                   }
                 }
               } else {
@@ -128,7 +178,9 @@ export function closeCommand(program: Command): void {
             console.log(formatJson(results.map(r => ({
               id: r.id,
               success: r.success,
+              status: r.status,
               ...(r.error && { error: r.error }),
+              ...(r.pendingVerifications && { pendingVerifications: r.pendingVerifications }),
               ...(r.unblocked && { unblocked: r.unblocked }),
             }))));
           }

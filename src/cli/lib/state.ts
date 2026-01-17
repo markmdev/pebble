@@ -28,6 +28,7 @@ export function computeState(events: IssueEvent[]): Map<string, Issue> {
           description: createEvent.data.description,
           parent: createEvent.data.parent,
           blockedBy: [],
+          relatedTo: [],
           verifies: createEvent.data.verifies,
           comments: [],
           createdAt: event.timestamp,
@@ -62,6 +63,9 @@ export function computeState(events: IssueEvent[]): Map<string, Issue> {
           }
           if (updateEvent.data.blockedBy !== undefined) {
             issue.blockedBy = updateEvent.data.blockedBy;
+          }
+          if (updateEvent.data.relatedTo !== undefined) {
+            issue.relatedTo = updateEvent.data.relatedTo;
           }
           issue.updatedAt = event.timestamp;
         }
@@ -200,8 +204,8 @@ export function getReady(): Issue[] {
   const issues = Array.from(state.values());
 
   return issues.filter((issue) => {
-    // Must not be closed
-    if (issue.status === 'closed') {
+    // Must not be closed or pending_verification
+    if (issue.status === 'closed' || issue.status === 'pending_verification') {
       return false;
     }
 
@@ -425,4 +429,56 @@ export function getNewlyUnblocked(closedIssueId: string): Issue[] {
   }
 
   return result;
+}
+
+/**
+ * Get issues related to a given issue (bidirectional relationship)
+ */
+export function getRelated(issueId: string): Issue[] {
+  const issue = getIssue(issueId);
+  if (!issue) {
+    return [];
+  }
+
+  const events = readEvents();
+  const state = computeState(events);
+
+  return issue.relatedTo
+    .map((id) => state.get(id))
+    .filter((i): i is Issue => i !== undefined);
+}
+
+/**
+ * Check if an issue has any open (non-closed) blockers
+ */
+export function hasOpenBlockersById(issueId: string): boolean {
+  const issue = getIssue(issueId);
+  if (!issue) {
+    return false;
+  }
+
+  const events = readEvents();
+  const state = computeState(events);
+
+  return issue.blockedBy.some((blockerId) => {
+    const blocker = state.get(blockerId);
+    return blocker && blocker.status !== 'closed';
+  });
+}
+
+/**
+ * Get open blockers for an issue (for error messages)
+ */
+export function getOpenBlockers(issueId: string): Issue[] {
+  const issue = getIssue(issueId);
+  if (!issue) {
+    return [];
+  }
+
+  const events = readEvents();
+  const state = computeState(events);
+
+  return issue.blockedBy
+    .map((id) => state.get(id))
+    .filter((i): i is Issue => i !== undefined && i.status !== 'closed');
 }

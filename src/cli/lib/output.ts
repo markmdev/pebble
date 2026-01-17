@@ -189,7 +189,8 @@ export function formatIssueListPretty(issues: Issue[]): string {
 export function formatDepsPretty(
   issueId: string,
   blockedBy: Issue[],
-  blocking: Issue[]
+  blocking: Issue[],
+  related: Issue[] = []
 ): string {
   const lines: string[] = [];
 
@@ -214,6 +215,17 @@ export function formatDepsPretty(
   } else {
     for (const issue of blocking) {
       lines.push(`  ○ ${issue.id} - ${truncate(issue.title, 30)}`);
+    }
+  }
+
+  lines.push('');
+  lines.push('Related:');
+  if (related.length === 0) {
+    lines.push('  (none)');
+  } else {
+    for (const issue of related) {
+      const status = issue.status === 'closed' ? '✓' : '○';
+      lines.push(`  ${status} ${issue.id} - ${truncate(issue.title, 30)}`);
     }
   }
 

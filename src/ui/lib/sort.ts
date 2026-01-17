@@ -43,13 +43,14 @@ export function sortByDependencies(issues: Issue[]): Issue[] {
 
 /**
  * Status sort order for issues.
- * in_progress (active) → open (todo) → blocked (waiting) → closed (done)
+ * in_progress (active) → open (todo) → blocked (waiting) → pending_verification → closed (done)
  */
 const STATUS_ORDER: Record<string, number> = {
   in_progress: 0,
   open: 1,
   blocked: 2,
-  closed: 3,
+  pending_verification: 3,
+  closed: 4,
 };
 
 /**
@@ -58,12 +59,12 @@ const STATUS_ORDER: Record<string, number> = {
  * @returns Numeric order (lower = higher priority)
  */
 export function getStatusOrder(status: string): number {
-  return STATUS_ORDER[status] ?? 4;
+  return STATUS_ORDER[status] ?? 5;
 }
 
 /**
  * Sorts issues by status in the standard order:
- * in_progress → open → blocked → closed
+ * in_progress → open → blocked → pending_verification → closed
  *
  * @param issues - Array of issues to sort
  * @returns New array sorted by status

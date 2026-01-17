@@ -51,6 +51,7 @@ import {
   Search,
   AlertCircle,
   CheckCircle2,
+  Link2,
 } from 'lucide-react';
 import { EventTimeline } from './EventTimeline';
 import { formatRelativeTime } from '../lib/time';
@@ -63,6 +64,8 @@ import {
   addComment,
   addDependency,
   removeDependency,
+  addRelated,
+  removeRelated,
 } from '../lib/api';
 
 interface IssueDetailProps {
@@ -109,6 +112,8 @@ export function IssueDetail({
   const [newComment, setNewComment] = useState('');
   const [blockerDialogOpen, setBlockerDialogOpen] = useState(false);
   const [selectedBlocker, setSelectedBlocker] = useState('');
+  const [relatedDialogOpen, setRelatedDialogOpen] = useState(false);
+  const [selectedRelated, setSelectedRelated] = useState('');
 
   // Loading states
   const [savingTitle, setSavingTitle] = useState(false);
@@ -117,12 +122,15 @@ export function IssueDetail({
   const [savingPriority, setSavingPriority] = useState(false);
   const [savingComment, setSavingComment] = useState(false);
   const [savingBlocker, setSavingBlocker] = useState(false);
+  const [savingRelated, setSavingRelated] = useState(false);
   const [closingIssue, setClosingIssue] = useState(false);
 
   // Confirmation dialog states
   const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
   const [removeBlockerConfirmOpen, setRemoveBlockerConfirmOpen] = useState(false);
   const [blockerToRemove, setBlockerToRemove] = useState<string | null>(null);
+  const [removeRelatedConfirmOpen, setRemoveRelatedConfirmOpen] = useState(false);
+  const [relatedToRemove, setRelatedToRemove] = useState<string | null>(null);
 
   // Activity section state (for epics)
   const [activityExpanded, setActivityExpanded] = useState(false);
@@ -148,6 +156,11 @@ export function IssueDetail({
     return sortByDependencies(blockers);
   }, [issue.blockedBy, issueMap]);
 
+  // Check if there are any open blockers (prevents setting status to in_progress)
+  const hasOpenBlockers = useMemo(() => {
+    return blockedByIssues.some((b) => b.status !== 'closed');
+  }, [blockedByIssues]);
+
   // Blocking: sorted by dependencies
   const blockingIssues = useMemo(() => {
     const blocked = allIssues.filter((i) => i.blockedBy.includes(issue.id));
@@ -167,6 +180,21 @@ export function IssueDetail({
     );
   }, [allIssues, issue.id, issue.blockedBy]);
 
+  // Related issues (bidirectional, non-blocking)
+  const relatedIssues = useMemo(() => {
+    return (issue.relatedTo || [])
+      .map((id) => issueMap.get(id))
+      .filter((i): i is Issue => i !== undefined);
+  }, [issue.relatedTo, issueMap]);
+
+  // Available issues for related selection (not self, not already related)
+  const availableRelated = useMemo(() => {
+    const relatedSet = new Set(issue.relatedTo || []);
+    return allIssues.filter(
+      (i) => i.id !== issue.id && !relatedSet.has(i.id)
+    );
+  }, [allIssues, issue.id, issue.relatedTo]);
+
   const parentIssue = issue.parent ? issueMap.get(issue.parent) : undefined;
 
   // Verification info
@@ -182,13 +210,13 @@ export function IssueDetail({
   // Close panel on Escape key
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !editingTitle && !editingDescription && !blockerDialogOpen) {
+      if (e.key === 'Escape' && !editingTitle && !editingDescription && !blockerDialogOpen && !relatedDialogOpen) {
         onClose();
       }
     };
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [onClose, editingTitle, editingDescription, blockerDialogOpen]);
+  }, [onClose, editingTitle, editingDescription, blockerDialogOpen, relatedDialogOpen]);
 
   // Handlers
   const handleSaveTitle = async () => {
@@ -285,22 +313,30 @@ export function IssueDetail({
     setClosingIssue(true);
     setCloseConfirmOpen(false);
     try {
-      await closeIssue(issue.id);
-      toast('Issue closed', {
-        duration: 5000,
-        action: {
-          label: 'Undo',
-          onClick: async () => {
-            try {
-              await reopenIssue(issue.id);
-              toast.success('Issue reopened');
-              onRefresh?.();
-            } catch {
-              toast.error('Failed to undo');
-            }
+      const result = await closeIssue(issue.id);
+      // Check if moved to pending_verification instead of closed
+      if (result.status === 'pending_verification') {
+        const pendingCount = (result as { _pendingVerifications?: Array<{ id: string }> })._pendingVerifications?.length || 0;
+        toast(`Moved to pending verification (${pendingCount} verification${pendingCount !== 1 ? 's' : ''} pending)`, {
+          duration: 5000,
+        });
+      } else {
+        toast('Issue closed', {
+          duration: 5000,
+          action: {
+            label: 'Undo',
+            onClick: async () => {
+              try {
+                await reopenIssue(issue.id);
+                toast.success('Issue reopened');
+                onRefresh?.();
+              } catch {
+                toast.error('Failed to undo');
+              }
+            },
           },
-        },
-      });
+        });
+      }
       onRefresh?.();
     } catch (err) {
       toast.error('Failed to close issue', {
@@ -367,6 +403,76 @@ export function IssueDetail({
       onRefresh?.();
     } catch (err) {
       toast.error('Failed to remove blocker', {
+        description: err instanceof Error ? err.message : undefined,
+      });
+    }
+  };
+
+  const handleAddRelated = async () => {
+    if (!selectedRelated) return;
+    const relatedIssue = issueMap.get(selectedRelated);
+    if (!relatedIssue) return;
+
+    setSavingRelated(true);
+    try {
+      await addRelated(
+        issue.id,
+        selectedRelated,
+        issue.relatedTo || [],
+        relatedIssue.relatedTo || []
+      );
+      setRelatedDialogOpen(false);
+      setSelectedRelated('');
+      toast.success('Related issue added');
+      onRefresh?.();
+    } catch (err) {
+      toast.error('Failed to add related issue', {
+        description: err instanceof Error ? err.message : undefined,
+      });
+    } finally {
+      setSavingRelated(false);
+    }
+  };
+
+  const handleRemoveRelated = async (relatedId: string) => {
+    setRemoveRelatedConfirmOpen(false);
+    setRelatedToRemove(null);
+    const relatedIssue = issueMap.get(relatedId);
+    if (!relatedIssue) return;
+
+    // Capture current values for undo (before removal changes the arrays)
+    const currentRelatedTo = [...(issue.relatedTo || [])];
+    const relatedIssueRelatedTo = [...(relatedIssue.relatedTo || [])];
+    // After removal, these will be the new arrays
+    const newOurRelatedTo = currentRelatedTo.filter(id => id !== relatedId);
+    const newTheirRelatedTo = relatedIssueRelatedTo.filter(id => id !== issue.id);
+
+    try {
+      await removeRelated(
+        issue.id,
+        relatedId,
+        currentRelatedTo,
+        relatedIssueRelatedTo
+      );
+      toast('Related issue removed', {
+        duration: 5000,
+        action: {
+          label: 'Undo',
+          onClick: async () => {
+            try {
+              // Restore the relationship by adding back the IDs
+              await addRelated(issue.id, relatedId, newOurRelatedTo, newTheirRelatedTo);
+              toast.success('Related issue restored');
+              onRefresh?.();
+            } catch {
+              toast.error('Failed to undo');
+            }
+          },
+        },
+      });
+      onRefresh?.();
+    } catch (err) {
+      toast.error('Failed to remove related issue', {
         description: err instanceof Error ? err.message : undefined,
       });
     }
@@ -466,8 +572,13 @@ export function IssueDetail({
               disabled={savingStatus || issue.status === 'closed'}
             >
               {STATUSES.filter((s) => s !== 'closed').map((s) => (
-                <option key={s} value={s}>
-                  {STATUS_LABELS[s]}
+                <option
+                  key={s}
+                  value={s}
+                  disabled={s === 'in_progress' && hasOpenBlockers}
+                  title={s === 'in_progress' && hasOpenBlockers ? 'Cannot start - has open blockers' : undefined}
+                >
+                  {STATUS_LABELS[s]}{s === 'in_progress' && hasOpenBlockers ? ' (blocked)' : ''}
                 </option>
               ))}
             </Select>
@@ -688,16 +799,31 @@ export function IssueDetail({
         {childIssues.length > 0 && (
           <div className="space-y-2">
             {(() => {
-              const closedCount = childIssues.filter((c) => c.status === 'closed').length;
+              // Separate regular children from verification children
+              const regularChildren = childIssues.filter((c) => c.type !== 'verification');
+              const verificationChildren = childIssues.filter((c) => c.type === 'verification');
+              const regularClosed = regularChildren.filter((c) => c.status === 'closed').length;
+              const verificationClosed = verificationChildren.filter((c) => c.status === 'closed').length;
+              const totalClosed = regularClosed + verificationClosed;
               const total = childIssues.length;
-              const percent = Math.round((closedCount / total) * 100);
+              const percent = Math.round((totalClosed / total) * 100);
+
+              // Build progress label
+              const parts: string[] = [];
+              if (regularChildren.length > 0) {
+                parts.push(`${regularClosed}/${regularChildren.length} done`);
+              }
+              if (verificationChildren.length > 0) {
+                parts.push(`${verificationClosed}/${verificationChildren.length} verification${verificationChildren.length === 1 ? '' : 's'}`);
+              }
+
               return (
                 <>
                   <h3 className="text-sm font-medium flex items-center gap-1">
                     <GitBranch className="h-4 w-4" />
-                    Child Issues ({closedCount}/{total} done)
+                    Child Issues ({parts.join(', ')})
                   </h3>
-                  <div className="w-full bg-gray-200 rounded-full h-2">
+                  <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
                     <div
                       className={`h-2 rounded-full transition-all ${
                         percent === 100 ? 'bg-green-500' : 'bg-purple-500'
@@ -843,6 +969,66 @@ export function IssueDetail({
             </div>
           </div>
         )}
+
+        {/* Related Issues */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-medium flex items-center gap-1">
+              <Link2 className="h-4 w-4" />
+              Related ({relatedIssues.length})
+            </h3>
+            {issue.status !== 'closed' && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setRelatedDialogOpen(true)}
+              >
+                <Plus className="h-3 w-3 mr-1" />
+                Add Related
+              </Button>
+            )}
+          </div>
+          {relatedIssues.length > 0 ? (
+            <div className="space-y-1">
+              {relatedIssues.map((related) => (
+                <div
+                  key={related.id}
+                  className="flex items-center justify-between hover:bg-muted rounded p-2"
+                >
+                  <button
+                    className="flex-1 text-left text-sm"
+                    onClick={() => onSelectIssue(related)}
+                  >
+                    <span className="font-mono text-xs">{related.id}</span>
+                    <span className="mx-2">—</span>
+                    <span>{related.title}</span>
+                    <Badge
+                      variant={STATUS_BADGE_VARIANTS[related.status]}
+                      className="ml-2 text-xs"
+                    >
+                      {related.status.replace('_', ' ')}
+                    </Badge>
+                  </button>
+                  {issue.status !== 'closed' && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => {
+                        setRelatedToRemove(related.id);
+                        setRemoveRelatedConfirmOpen(true);
+                      }}
+                      title="Remove related"
+                    >
+                      <X className="h-3 w-3" />
+                    </Button>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">No related issues.</p>
+          )}
+        </div>
 
         {/* Comments */}
         <div className="space-y-2">
@@ -995,6 +1181,72 @@ export function IssueDetail({
             </AlertDialogCancel>
             <AlertDialogAction onClick={() => blockerToRemove && handleRemoveBlocker(blockerToRemove)}>
               Remove Blocker
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Add related dialog */}
+      <Dialog open={relatedDialogOpen} onOpenChange={setRelatedDialogOpen}>
+        <DialogContent onClose={() => setRelatedDialogOpen(false)}>
+          <DialogHeader>
+            <DialogTitle>Add Related Issue</DialogTitle>
+          </DialogHeader>
+          <div className="py-4 px-6">
+            <Label>Select a related issue</Label>
+            <div className="mt-2">
+              <IssueSelector
+                issues={availableRelated}
+                value={selectedRelated}
+                onChange={setSelectedRelated}
+                excludeIds={[issue.id, ...(issue.relatedTo || [])]}
+                placeholder="Search for an issue..."
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setRelatedDialogOpen(false);
+                setSelectedRelated('');
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleAddRelated}
+              disabled={!selectedRelated || savingRelated}
+            >
+              {savingRelated ? (
+                <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+              ) : (
+                <Plus className="h-4 w-4 mr-1" />
+              )}
+              Add Related
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Remove related confirmation dialog */}
+      <AlertDialog open={removeRelatedConfirmOpen} onOpenChange={setRemoveRelatedConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove Related Issue</AlertDialogTitle>
+            <AlertDialogDescription>
+              Remove {relatedToRemove} as a related issue?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => {
+              setRemoveRelatedConfirmOpen(false);
+              setRelatedToRemove(null);
+            }}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction onClick={() => relatedToRemove && handleRemoveRelated(relatedToRemove)}>
+              Remove Related
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
