@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import type { IssueType, Priority, CreateEvent } from '../../shared/types.js';
+import type { IssueType, Priority, CreateEvent, UpdateEvent } from '../../shared/types.js';
 import { ISSUE_TYPES, PRIORITIES } from '../../shared/types.js';
 import { getOrCreatePebbleDir, getConfig, appendEvent } from '../lib/storage.js';
 import { generateId } from '../lib/id.js';
@@ -15,6 +15,8 @@ export function createCommand(program: Command): void {
     .option('-d, --description <desc>', 'Description')
     .option('--parent <id>', 'Parent epic ID')
     .option('--verifies <id>', 'ID of issue this verifies (sets type to verification)')
+    .option('--blocked-by <ids>', 'Comma-separated IDs of issues that block this one')
+    .option('--blocks <ids>', 'Comma-separated IDs of issues this one will block')
     .action(async (title: string, options) => {
       const pretty = program.opts().pretty ?? false;
 
@@ -71,6 +73,37 @@ export function createCommand(program: Command): void {
           }
         }
 
+        // Resolve --blocked-by (issues that block this new issue)
+        const blockedByIds: string[] = [];
+        if (options.blockedBy) {
+          const ids = options.blockedBy.split(',').map((s: string) => s.trim()).filter(Boolean);
+          for (const rawId of ids) {
+            const resolvedId = resolveId(rawId);
+            const blocker = getIssue(resolvedId);
+            if (!blocker) {
+              throw new Error(`Blocker issue not found: ${rawId}`);
+            }
+            if (blocker.status === 'closed') {
+              throw new Error(`Cannot be blocked by closed issue: ${resolvedId}`);
+            }
+            blockedByIds.push(resolvedId);
+          }
+        }
+
+        // Resolve --blocks (issues this new issue will block)
+        const blocksIds: string[] = [];
+        if (options.blocks) {
+          const ids = options.blocks.split(',').map((s: string) => s.trim()).filter(Boolean);
+          for (const rawId of ids) {
+            const resolvedId = resolveId(rawId);
+            const blocked = getIssue(resolvedId);
+            if (!blocked) {
+              throw new Error(`Issue to block not found: ${rawId}`);
+            }
+            blocksIds.push(resolvedId);
+          }
+        }
+
         // Generate ID and create event
         const id = generateId(config.prefix);
         const timestamp = new Date().toISOString();
@@ -90,6 +123,31 @@ export function createCommand(program: Command): void {
         };
 
         appendEvent(event, pebbleDir);
+
+        // Add dependencies via UpdateEvents
+        // --blocked-by: Set this issue's blockedBy array
+        if (blockedByIds.length > 0) {
+          const depEvent: UpdateEvent = {
+            type: 'update',
+            issueId: id,
+            timestamp: new Date().toISOString(),
+            data: { blockedBy: blockedByIds },
+          };
+          appendEvent(depEvent, pebbleDir);
+        }
+
+        // --blocks: Add this issue to each target's blockedBy array
+        for (const targetId of blocksIds) {
+          const target = getIssue(targetId);
+          const existingBlockers = target?.blockedBy || [];
+          const depEvent: UpdateEvent = {
+            type: 'update',
+            issueId: targetId,
+            timestamp: new Date().toISOString(),
+            data: { blockedBy: [...existingBlockers, id] },
+          };
+          appendEvent(depEvent, pebbleDir);
+        }
 
         // Output success
         outputMutationSuccess(id, pretty);

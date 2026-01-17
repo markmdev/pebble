@@ -2,12 +2,11 @@ import { useMemo } from 'react';
 import type { Issue } from '../../shared/types';
 import { ChevronRight, Home } from 'lucide-react';
 
-type View = 'list' | 'dashboard' | 'graph' | 'history';
+type View = 'list' | 'dashboard' | 'history';
 
 interface BreadcrumbsProps {
   view: View;
   selectedIssue: Issue | null;
-  graphRootId: string | null;
   allIssues: Issue[];
   onClearSelection: () => void;
   onSelectIssue: (issue: Issue) => void;
@@ -17,14 +16,12 @@ interface BreadcrumbsProps {
 export function Breadcrumbs({
   view,
   selectedIssue,
-  graphRootId,
   allIssues,
   onClearSelection,
   onSelectIssue,
   onNavigateToView,
 }: BreadcrumbsProps) {
   const issueMap = useMemo(() => new Map(allIssues.map((i) => [i.id, i])), [allIssues]);
-  const graphRootIssue = graphRootId ? issueMap.get(graphRootId) : null;
 
   // Build breadcrumb trail
   const crumbs: { label: string; onClick?: () => void }[] = [];
@@ -33,7 +30,6 @@ export function Breadcrumbs({
   const viewLabels: Record<View, string> = {
     list: 'List',
     dashboard: 'Dashboard',
-    graph: 'Graph',
     history: 'History',
   };
 
@@ -44,13 +40,6 @@ export function Breadcrumbs({
       onNavigateToView(view);
     },
   });
-
-  // For graph view with a focused root
-  if (view === 'graph' && graphRootIssue) {
-    crumbs.push({
-      label: `Focused: ${graphRootIssue.id}`,
-    });
-  }
 
   // For selected issue, show parent chain
   if (selectedIssue) {

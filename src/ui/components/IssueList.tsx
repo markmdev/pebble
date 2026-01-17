@@ -30,7 +30,7 @@ import { Badge } from './ui/badge';
 import { Input } from './ui/input';
 import { Select } from './ui/select';
 import { Button } from './ui/button';
-import { ArrowUpDown, ChevronRight, ChevronDown, GitBranch, FolderSync, Folder, Search } from 'lucide-react';
+import { ArrowUpDown, ChevronRight, ChevronDown, FolderSync, Folder, Search } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { getCommonPrefix, getRelativePath } from '../lib/path';
 
@@ -41,7 +41,6 @@ export interface IssueListProps {
   issues: Issue[];
   events: IssueEvent[];
   onSelectIssue: (issue: Issue) => void;
-  onFocusGraph?: (issueId: string) => void;
   selectedIds?: Set<string>;
   onToggleSelect?: (issueId: string) => void;
   onSelectAll?: (issueIds: string[]) => void;
@@ -84,31 +83,50 @@ function countOpenBlockers(issue: Issue, issueMap: Map<string, Issue>): number {
 }
 
 // Build hierarchical data: supports unlimited nesting depth
+// Also nests verification issues under their target issues
 function buildHierarchy(issues: Issue[]): IssueWithChildren[] {
   const issueMap = new Map(issues.map((i) => [i.id, i]));
   const childrenByParent = new Map<string, Issue[]>();
+  const verificationsByTarget = new Map<string, Issue[]>();
 
-  // Group children by parent
+  // Group children by parent and verifications by target
   for (const issue of issues) {
     if (issue.parent && issueMap.has(issue.parent)) {
       const children = childrenByParent.get(issue.parent) || [];
       children.push(issue);
       childrenByParent.set(issue.parent, children);
     }
+    // Group verification issues by their target (separate from parent-child)
+    if (issue.type === 'verification' && issue.verifies && issueMap.has(issue.verifies)) {
+      const verifications = verificationsByTarget.get(issue.verifies) || [];
+      verifications.push(issue);
+      verificationsByTarget.set(issue.verifies, verifications);
+    }
   }
 
   // Recursively build hierarchy for an issue
   function buildIssueWithChildren(issue: Issue): IssueWithChildren {
     const children = childrenByParent.get(issue.id) || [];
+    const verifications = verificationsByTarget.get(issue.id) || [];
+
     // Sort children: open issues first (by status), closed at bottom
     const sortedChildren = [...children].sort((a, b) => {
       return getStatusOrder(a.status) - getStatusOrder(b.status);
     });
 
-    // Recursively build children's children
-    const subRows = sortedChildren.length > 0
-      ? sortedChildren.map(child => buildIssueWithChildren(child))
-      : undefined;
+    // Sort verifications: open first, then by status
+    const sortedVerifications = [...verifications].sort((a, b) => {
+      return getStatusOrder(a.status) - getStatusOrder(b.status);
+    });
+
+    // Recursively build children's children (but NOT verifications - they don't nest further)
+    const childSubRows = sortedChildren.map(child => buildIssueWithChildren(child));
+    // Verifications are leaf nodes (no further nesting)
+    const verificationSubRows = sortedVerifications.map(v => ({ ...v, subRows: undefined }));
+
+    // Combine: children first, then verifications
+    const allSubRows = [...childSubRows, ...verificationSubRows];
+    const subRows = allSubRows.length > 0 ? allSubRows : undefined;
 
     return {
       ...issue,
@@ -117,10 +135,15 @@ function buildHierarchy(issues: Issue[]): IssueWithChildren[] {
   }
 
   // Build top level (issues without parents or with missing parents)
+  // Also exclude verification issues that have a valid target (they're nested under it)
   const topLevel: IssueWithChildren[] = [];
   for (const issue of issues) {
-    // Skip if this issue has a valid parent (it will be nested)
+    // Skip if this issue has a valid parent (it will be nested under parent)
     if (issue.parent && issueMap.has(issue.parent)) {
+      continue;
+    }
+    // Skip verification issues that have a valid target (they're nested under target)
+    if (issue.type === 'verification' && issue.verifies && issueMap.has(issue.verifies)) {
       continue;
     }
     topLevel.push(buildIssueWithChildren(issue));
@@ -167,7 +190,6 @@ export function IssueList({
   issues,
   events,
   onSelectIssue,
-  onFocusGraph,
   selectedIds = new Set(),
   onToggleSelect,
   onSelectAll,
@@ -254,6 +276,47 @@ export function IssueList({
     return Array.from(sources).sort();
   }, [issues]);
 
+  // Helper: check if issue matches search text
+  const matchesSearch = (issue: Issue, search: string): boolean => {
+    if (!search) return false;
+    const lowerSearch = search.toLowerCase();
+    if (issue.title.toLowerCase().includes(lowerSearch)) return true;
+    if (issue.id.toLowerCase().includes(lowerSearch)) return true;
+    if (issue.type.toLowerCase().includes(lowerSearch)) return true;
+    if (issue.status.toLowerCase().includes(lowerSearch)) return true;
+    if (issue.description?.toLowerCase().includes(lowerSearch)) return true;
+    if (issue.comments.some(c => c.text.toLowerCase().includes(lowerSearch))) return true;
+    return false;
+  };
+
+  // Compute search-matched IDs and their ancestors (so children show under parents)
+  const { searchMatchedIds, ancestorIds } = useMemo(() => {
+    const searchMatchedIds = new Set<string>();
+    const ancestorIds = new Set<string>();
+
+    if (!globalFilter) {
+      return { searchMatchedIds, ancestorIds };
+    }
+
+    // Find all issues that match the search
+    for (const issue of issues) {
+      if (matchesSearch(issue, globalFilter)) {
+        searchMatchedIds.add(issue.id);
+
+        // Walk up the parent chain to include ancestors
+        let current = issue;
+        while (current.parent) {
+          ancestorIds.add(current.parent);
+          const parent = issueMap.get(current.parent);
+          if (!parent) break;
+          current = parent;
+        }
+      }
+    }
+
+    return { searchMatchedIds, ancestorIds };
+  }, [issues, globalFilter, issueMap]);
+
   // Apply source and preset filtering BEFORE hierarchy (fixes preset reactivity)
   const filteredIssues = useMemo(() => {
     let result = issues;
@@ -269,6 +332,12 @@ export function IssueList({
     if (!activePreset) return result;
 
     return result.filter((issue) => {
+      // If search is active: include search matches and their ancestors
+      // This allows children to appear under their parent epics even when preset filters would exclude them
+      if (globalFilter && (searchMatchedIds.has(issue.id) || ancestorIds.has(issue.id))) {
+        return true;
+      }
+
       const hasBlockers = hasOpenBlockers(issue, issueMap);
       switch (activePreset) {
         case 'ready': {
@@ -293,7 +362,7 @@ export function IssueList({
           return true;
       }
     });
-  }, [issues, activePreset, issueMap, sourceFilter]);
+  }, [issues, activePreset, issueMap, sourceFilter, globalFilter, searchMatchedIds, ancestorIds]);
 
   // Build hierarchical data structure from filtered issues
   const hierarchicalData = useMemo(
@@ -387,18 +456,6 @@ export function IssueList({
                   <span className="w-5 mr-1" />
                 )}
                 <span className="font-mono text-xs">{row.getValue('id')}</span>
-                {onFocusGraph && (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onFocusGraph(row.original.id);
-                    }}
-                    className="ml-1 p-0.5 text-muted-foreground hover:text-blue-600 hover:bg-blue-50 rounded"
-                    title="View in graph"
-                  >
-                    <GitBranch className="h-3.5 w-3.5" />
-                  </button>
-                )}
               </div>
               {/* Source path row */}
               {relativePath && sources && (
@@ -626,7 +683,7 @@ export function IssueList({
         },
       },
     ],
-    [issues, issueMap, latestEventMap, onSelectIssue, onFocusGraph, selectedIds, onToggleSelect, onSelectAll, visibleIssueIds, allSelected, someSelected, sourcePathPrefix]
+    [issues, issueMap, latestEventMap, onSelectIssue, selectedIds, onToggleSelect, onSelectAll, visibleIssueIds, allSelected, someSelected, sourcePathPrefix]
   );
 
   const table = useReactTable({
@@ -825,10 +882,11 @@ export function IssueList({
                   status === 'blocked' || rowHasOpenBlockers ? 'border-l-4 border-l-red-500' :
                   status === 'closed' ? 'border-l-4 border-l-green-500' :
                   '';
+                const isClosedRow = status === 'closed';
                 return (
                 <TableRow
                   key={row.id}
-                  className={`cursor-pointer ${statusBorder}`}
+                  className={`cursor-pointer ${statusBorder} ${isClosedRow ? 'bg-muted/30 opacity-75' : ''}`}
                   onClick={() => onSelectIssue(row.original)}
                 >
                   {row.getVisibleCells().map((cell) => (

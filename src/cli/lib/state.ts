@@ -57,7 +57,8 @@ export function computeState(events: IssueEvent[]): Map<string, Issue> {
             issue.description = updateEvent.data.description;
           }
           if (updateEvent.data.parent !== undefined) {
-            issue.parent = updateEvent.data.parent;
+            // Empty string means "clear parent" (sentinel value from --parent null)
+            issue.parent = updateEvent.data.parent || undefined;
           }
           if (updateEvent.data.blockedBy !== undefined) {
             issue.blockedBy = updateEvent.data.blockedBy;

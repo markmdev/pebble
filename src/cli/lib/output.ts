@@ -330,3 +330,68 @@ export function outputError(error: Error | string, pretty: boolean): void {
   }
   process.exit(1);
 }
+
+/**
+ * Extended issue info for verbose output
+ */
+export interface VerboseIssueInfo {
+  issue: Issue;
+  blocking: string[];
+  children: number;
+  verifications: number;
+  blockers?: string[]; // For blocked command: open blockers
+}
+
+/**
+ * Format a list of issues with verbose details
+ */
+export function formatIssueListVerbose(issues: VerboseIssueInfo[]): string {
+  if (issues.length === 0) {
+    return 'No issues found.';
+  }
+
+  const lines: string[] = [];
+
+  for (const info of issues) {
+    const { issue, blocking, children, verifications, blockers } = info;
+
+    lines.push(`${issue.id} - ${issue.title}`);
+    lines.push('─'.repeat(60));
+    lines.push(`  Type:          ${formatType(issue.type)}`);
+    lines.push(`  Priority:      P${issue.priority}`);
+    lines.push(`  Status:        ${issue.status}`);
+    lines.push(`  Parent:        ${issue.parent || '-'}`);
+    lines.push(`  Children:      ${issue.type === 'epic' ? children : '-'}`);
+    lines.push(`  Blocking:      ${blocking.length > 0 ? blocking.join(', ') : '[]'}`);
+    lines.push(`  Verifications: ${verifications}`);
+
+    if (blockers && blockers.length > 0) {
+      lines.push(`  Blocked by:    ${blockers.join(', ')}`);
+    }
+
+    lines.push('');
+  }
+
+  lines.push(`Total: ${issues.length} issue(s)`);
+
+  return lines.join('\n');
+}
+
+/**
+ * Output a list of issues with verbose details
+ */
+export function outputIssueListVerbose(issues: VerboseIssueInfo[], pretty: boolean): void {
+  if (pretty) {
+    console.log(formatIssueListVerbose(issues));
+  } else {
+    // JSON output includes all fields
+    const output = issues.map(({ issue, blocking, children, verifications, blockers }) => ({
+      ...issue,
+      blocking,
+      childrenCount: issue.type === 'epic' ? children : undefined,
+      verificationsCount: verifications,
+      ...(blockers && { openBlockers: blockers }),
+    }));
+    console.log(formatJson(output));
+  }
+}

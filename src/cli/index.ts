@@ -20,6 +20,7 @@ import { summaryCommand } from './commands/summary.js';
 import { historyCommand } from './commands/history.js';
 import { searchCommand } from './commands/search.js';
 import { verificationsCommand } from './commands/verifications.js';
+import { initCommand } from './commands/init.js';
 
 const program = new Command();
 
@@ -51,5 +52,6 @@ summaryCommand(program);
 historyCommand(program);
 searchCommand(program);
 verificationsCommand(program);
+initCommand(program);
 
 program.parse();

@@ -6,7 +6,6 @@ import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { IssueList, type FilterPreset } from './components/IssueList';
 import { IssueDetail } from './components/IssueDetail';
 import type { SortingState, ColumnFiltersState, ExpandedState } from '@tanstack/react-table';
-import { DependencyGraph } from './components/DependencyGraph';
 import { HistoryView } from './components/HistoryView';
 import { Dashboard } from './components/Dashboard';
 import { Breadcrumbs } from './components/Breadcrumbs';
@@ -17,16 +16,15 @@ import { SourceManager } from './components/SourceManager';
 import { Button } from './components/ui/button';
 import type { Issue } from '../shared/types';
 import { fetchSources, type SourcesResponse } from './lib/api';
-import { List, GitBranch, History, LayoutDashboard, RefreshCw, Loader2, Plus, FolderSync } from 'lucide-react';
+import { List, History, LayoutDashboard, RefreshCw, Loader2, Plus, FolderSync } from 'lucide-react';
 
-type View = 'list' | 'dashboard' | 'graph' | 'history';
+type View = 'list' | 'dashboard' | 'history';
 
 function AppContent() {
   const { resolvedTheme } = useTheme();
   const { issues, events, loading, error, refresh } = useIssues();
   const [view, setView] = useState<View>('list');
   const [selectedIssue, setSelectedIssue] = useState<Issue | null>(null);
-  const [graphRootId, setGraphRootId] = useState<string | null>(null);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
@@ -60,19 +58,10 @@ function AppContent() {
   // Get all epics for the create form parent selector
   const epics = useMemo(() => issues.filter((i) => i.type === 'epic'), [issues]);
 
-  // Close detail panel when view changes, and clear graph root
+  // Close detail panel when view changes
   const handleViewChange = (newView: View) => {
     setSelectedIssue(null);
-    if (newView !== 'graph') {
-      setGraphRootId(null);
-    }
     setView(newView);
-  };
-
-  // Focus graph on a specific issue
-  const handleFocusGraph = (issueId: string) => {
-    setGraphRootId(issueId);
-    setView('graph');
   };
 
   const handleSelectIssue = (issue: Issue) => {
@@ -227,15 +216,6 @@ function AppContent() {
                 Dashboard
               </Button>
               <Button
-                variant={view === 'graph' ? 'default' : 'ghost'}
-                size="sm"
-                onClick={() => handleViewChange('graph')}
-                className="rounded-none border-x"
-              >
-                <GitBranch className="h-4 w-4 mr-1" />
-                Graph
-              </Button>
-              <Button
                 variant={view === 'history' ? 'default' : 'ghost'}
                 size="sm"
                 onClick={() => handleViewChange('history')}
@@ -280,7 +260,6 @@ function AppContent() {
       <Breadcrumbs
         view={view}
         selectedIssue={selectedIssue}
-        graphRootId={graphRootId}
         allIssues={issues}
         onClearSelection={handleCloseDetail}
         onSelectIssue={handleSelectIssue}
@@ -310,7 +289,6 @@ function AppContent() {
                   issues={issues}
                   events={events}
                   onSelectIssue={handleSelectIssue}
-                  onFocusGraph={handleFocusGraph}
                   selectedIds={selectedIds}
                   onToggleSelect={handleToggleSelect}
                   onSelectAll={handleSelectAll}
@@ -337,16 +315,6 @@ function AppContent() {
                 onSelectIssue={handleSelectIssue}
               />
             )}
-            {view === 'graph' && (
-              <div className="h-[calc(100vh-150px)]">
-                <DependencyGraph
-                  issues={issues}
-                  onSelectIssue={handleSelectIssue}
-                  rootIssueId={graphRootId ?? undefined}
-                  onClearRoot={() => setGraphRootId(null)}
-                />
-              </div>
-            )}
             {view === 'history' && (
               <HistoryView
                 events={events}
@@ -372,7 +340,6 @@ function AppContent() {
           events={events}
           onClose={handleCloseDetail}
           onSelectIssue={handleSelectIssue}
-          onFocusGraph={handleFocusGraph}
           onRefresh={refresh}
           commentInputRef={commentInputRef}
         />

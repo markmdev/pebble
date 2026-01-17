@@ -152,7 +152,7 @@ export function getConfig(pebbleDir?: string): PebbleConfig {
   const configPath = getConfigPath(pebbleDir);
 
   if (!fs.existsSync(configPath)) {
-    throw new Error('Config file not found. Initialize .pebble first.');
+    throw new Error("No .pebble directory found. Run 'pb init' to initialize.");
   }
 
   const content = fs.readFileSync(configPath, 'utf-8');

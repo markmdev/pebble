@@ -1,5 +1,9 @@
 import React, { useState, useMemo } from 'react';
 import type { IssueEvent, Issue } from '../../shared/types';
+import {
+  TYPE_BADGE_VARIANTS,
+  PRIORITY_DISPLAY_LABELS,
+} from '../../shared/types';
 import { Input } from './ui/input';
 import { Select } from './ui/select';
 import { Badge } from './ui/badge';
@@ -333,9 +337,17 @@ export function EventTimeline({
                             </span>
                           )}
                           {issue && (
-                            <span className="text-sm text-muted-foreground">
-                              — {issue.title}
-                            </span>
+                            <>
+                              <Badge variant={TYPE_BADGE_VARIANTS[issue.type as keyof typeof TYPE_BADGE_VARIANTS]} className="text-xs">
+                                {issue.type}
+                              </Badge>
+                              <span className={`text-xs ${issue.priority <= 1 ? 'font-semibold text-red-600' : 'text-muted-foreground'}`}>
+                                {PRIORITY_DISPLAY_LABELS[issue.priority as keyof typeof PRIORITY_DISPLAY_LABELS]}
+                              </span>
+                              <span className="text-sm text-muted-foreground">
+                                — {issue.title}
+                              </span>
+                            </>
                           )}
                           {issue?._sources?.[0] && (
                             <span
@@ -475,9 +487,17 @@ export function EventTimeline({
                                       </span>
                                     )}
                                     {issue && (
-                                      <span className="text-sm text-muted-foreground">
-                                        — {issue.title}
-                                      </span>
+                                      <>
+                                        <Badge variant={TYPE_BADGE_VARIANTS[issue.type as keyof typeof TYPE_BADGE_VARIANTS]} className="text-xs">
+                                          {issue.type}
+                                        </Badge>
+                                        <span className={`text-xs ${issue.priority <= 1 ? 'font-semibold text-red-600' : 'text-muted-foreground'}`}>
+                                          {PRIORITY_DISPLAY_LABELS[issue.priority as keyof typeof PRIORITY_DISPLAY_LABELS]}
+                                        </span>
+                                        <span className="text-sm text-muted-foreground">
+                                          — {issue.title}
+                                        </span>
+                                      </>
                                     )}
                                     {issue?._sources?.[0] && (
                                       <span
@@ -496,6 +516,29 @@ export function EventTimeline({
                                 {formatRelativeTime(event.timestamp)}
                               </div>
                             </div>
+
+                            {/* Parent chain for single-event groups */}
+                            {!hasMultipleEvents && (() => {
+                              const parentChain = getParentChain(group.issueId, issueMap);
+                              if (parentChain.length === 0) return null;
+                              const reversed = [...parentChain].reverse(); // root → ... → immediate parent
+                              return (
+                                <div className="flex items-center gap-1 text-xs text-muted-foreground mt-1">
+                                  <span>Parent:</span>
+                                  {reversed.map((parent, idx) => (
+                                    <span key={parent.id} className="flex items-center">
+                                      {idx > 0 && <ChevronRight className="h-3 w-3 mx-0.5" />}
+                                      <button
+                                        className="text-primary hover:underline font-mono"
+                                        onClick={() => onSelectIssue(parent)}
+                                      >
+                                        {parent.id}
+                                      </button>
+                                    </span>
+                                  ))}
+                                </div>
+                              );
+                            })()}
 
                             <p className="text-sm text-muted-foreground">
                               {formatEventData(event)}

@@ -10,23 +10,28 @@ interface MergedIssue extends Issue {
 }
 
 /**
- * Merge events from multiple files, keeping all events sorted by timestamp
+ * Merge events from multiple files, keeping all events sorted by timestamp.
+ * Deduplicates events using key: issueId-timestamp-type
  */
 function mergeEvents(filePaths: string[]): IssueEvent[] {
-  const allEvents: Array<IssueEvent & { _source: string }> = [];
+  const seen = new Map<string, IssueEvent>();
 
   for (const filePath of filePaths) {
     const events = readEventsFromFile(filePath);
     for (const event of events) {
-      allEvents.push({ ...event, _source: filePath });
+      // Create a unique key for deduplication
+      const key = `${event.issueId}-${event.timestamp}-${event.type}`;
+      if (!seen.has(key)) {
+        seen.set(key, event);
+      }
     }
   }
 
-  // Sort by timestamp
+  // Get all unique events and sort by timestamp
+  const allEvents = Array.from(seen.values());
   allEvents.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
-  // Return events without _source annotation for clean output
-  return allEvents.map(({ _source, ...event }) => event);
+  return allEvents;
 }
 
 /**

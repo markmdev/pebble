@@ -71,7 +71,6 @@ interface IssueDetailProps {
   events: IssueEvent[];
   onClose: () => void;
   onSelectIssue: (issue: Issue) => void;
-  onFocusGraph?: (issueId: string) => void;
   onRefresh?: () => void;
   commentInputRef?: RefObject<HTMLTextAreaElement>;
 }
@@ -82,7 +81,6 @@ export function IssueDetail({
   events,
   onClose,
   onSelectIssue,
-  onFocusGraph,
   onRefresh,
   commentInputRef,
 }: IssueDetailProps) {
@@ -453,17 +451,6 @@ export function IssueDetail({
                 <Pencil className="h-4 w-4" />
               </Button>
             </>
-          )}
-          {onFocusGraph && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => onFocusGraph(issue.id)}
-              title="View in graph"
-            >
-              <GitBranch className="h-4 w-4 mr-1" />
-              Graph
-            </Button>
           )}
         </div>
       </div>

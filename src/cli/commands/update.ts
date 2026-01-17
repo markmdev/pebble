@@ -13,6 +13,7 @@ export function updateCommand(program: Command): void {
     .option('--priority <priority>', 'Priority (0-4)')
     .option('--title <title>', 'Title')
     .option('--description <desc>', 'Description')
+    .option('--parent <id>', 'Parent epic ID (use "null" to remove parent)')
     .action(async (ids: string[], options) => {
       const pretty = program.opts().pretty ?? false;
 
@@ -58,8 +59,30 @@ export function updateCommand(program: Command): void {
           hasChanges = true;
         }
 
+        if (options.parent !== undefined) {
+          if (options.parent.toLowerCase() === 'null') {
+            // Remove parent - use empty string as sentinel (undefined would be ignored by state.ts)
+            data.parent = '';
+          } else {
+            // Resolve and validate parent
+            const parentId = resolveId(options.parent);
+            const parentIssue = getIssue(parentId);
+            if (!parentIssue) {
+              throw new Error(`Parent issue not found: ${options.parent}`);
+            }
+            if (parentIssue.type !== 'epic') {
+              throw new Error(`Parent must be an epic. ${parentId} is a ${parentIssue.type}`);
+            }
+            if (parentIssue.status === 'closed') {
+              throw new Error(`Cannot set parent to closed epic: ${parentId}`);
+            }
+            data.parent = parentId;
+          }
+          hasChanges = true;
+        }
+
         if (!hasChanges) {
-          throw new Error('No changes specified. Use --status, --priority, --title, or --description');
+          throw new Error('No changes specified. Use --status, --priority, --title, --description, or --parent');
         }
 
         const results: Array<{ id: string; success: boolean; error?: string }> = [];
