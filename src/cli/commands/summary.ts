@@ -109,9 +109,8 @@ export function summaryCommand(program: Command): void {
   program
     .command('summary')
     .description('Show epic summary with child completion status')
-    .option('--status <status>', 'Filter epics by status (default: open)')
-    .option('--limit <n>', 'Max epics to return', '10')
-    .option('--include-closed', 'Include closed epics')
+    .option('--status <status>', 'Filter epics by specific status')
+    .option('--limit <n>', 'Max epics to return per section', '10')
     .action(async (options) => {
       const pretty = program.opts().pretty ?? false;
 
@@ -149,80 +148,75 @@ export function summaryCommand(program: Command): void {
 
         const limit = parseInt(options.limit, 10);
 
-        // Handle --include-closed: show both open and closed sections
-        if (options.includeClosed) {
-          const openEpics = allEpics.filter((e) => e.status !== 'closed');
-
-          // Filter closed epics to last 72 hours (using updatedAt as proxy for close time)
-          const seventyTwoHoursAgo = Date.now() - (72 * 60 * 60 * 1000);
-          const closedEpics = allEpics.filter((e) =>
-            e.status === 'closed' &&
-            new Date(e.updatedAt).getTime() > seventyTwoHoursAgo
-          );
-
-          // Sort both by createdAt descending
-          openEpics.sort((a, b) =>
-            new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-          );
-          closedEpics.sort((a, b) =>
-            new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-          );
-
-          // Apply limit to each section
-          const limitedOpen = limit > 0 ? openEpics.slice(0, limit) : openEpics;
-          const limitedClosed = limit > 0 ? closedEpics.slice(0, limit) : closedEpics;
-
-          const openSummaries = limitedOpen.map(buildSummary);
-          const closedSummaries = limitedClosed.map(buildSummary);
-
-          if (pretty) {
-            const output: string[] = [];
-            if (openSummaries.length > 0) {
-              output.push(formatSummaryPretty(openSummaries, 'Open Epics'));
-            }
-            if (closedSummaries.length > 0) {
-              if (output.length > 0) output.push('');
-              output.push(formatSummaryPretty(closedSummaries, 'Recently Closed Epics (last 72h)'));
-            }
-            console.log(output.join('\n'));
-          } else {
-            console.log(formatJson({ open: openSummaries, closed: closedSummaries }));
-          }
-          return;
-        }
-
-        // Filter by status
-        let epics = allEpics;
-        let sectionHeader = 'Open Epics';
+        // If filtering by specific status, show only that status
         if (options.status !== undefined) {
           const status = options.status as Status;
           if (!STATUSES.includes(status)) {
             throw new Error(`Invalid status: ${status}. Must be one of: ${STATUSES.join(', ')}`);
           }
-          epics = epics.filter((e) => e.status === status);
-          sectionHeader = `${STATUS_LABELS[status]} Epics`;
-        } else {
-          // Default: show non-closed epics
-          epics = epics.filter((e) => e.status !== 'closed');
+
+          let epics = allEpics.filter((e) => e.status === status);
+
+          // Sort by createdAt descending (newest first)
+          epics.sort((a, b) =>
+            new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+          );
+
+          // Apply limit
+          if (limit > 0) {
+            epics = epics.slice(0, limit);
+          }
+
+          const summaries = epics.map(buildSummary);
+
+          if (pretty) {
+            console.log(formatSummaryPretty(summaries, `${STATUS_LABELS[status]} Epics`));
+          } else {
+            console.log(formatJson(summaries));
+          }
+          return;
         }
 
-        // Sort by createdAt descending (newest first)
-        epics.sort((a, b) =>
+        // Default: show open epics + recently closed (last 72h)
+        const openEpics = allEpics.filter((e) => e.status !== 'closed');
+
+        // Filter closed epics to last 72 hours (using updatedAt as proxy for close time)
+        const seventyTwoHoursAgo = Date.now() - (72 * 60 * 60 * 1000);
+        const closedEpics = allEpics.filter((e) =>
+          e.status === 'closed' &&
+          new Date(e.updatedAt).getTime() > seventyTwoHoursAgo
+        );
+
+        // Sort both by createdAt descending
+        openEpics.sort((a, b) =>
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        );
+        closedEpics.sort((a, b) =>
           new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
         );
 
-        // Apply limit
-        if (limit > 0) {
-          epics = epics.slice(0, limit);
-        }
+        // Apply limit to each section
+        const limitedOpen = limit > 0 ? openEpics.slice(0, limit) : openEpics;
+        const limitedClosed = limit > 0 ? closedEpics.slice(0, limit) : closedEpics;
 
-        // Build summaries
-        const summaries: EpicSummary[] = epics.map(buildSummary);
+        const openSummaries = limitedOpen.map(buildSummary);
+        const closedSummaries = limitedClosed.map(buildSummary);
 
         if (pretty) {
-          console.log(formatSummaryPretty(summaries, sectionHeader));
+          const output: string[] = [];
+          if (openSummaries.length > 0) {
+            output.push(formatSummaryPretty(openSummaries, 'Open Epics'));
+          }
+          if (closedSummaries.length > 0) {
+            if (output.length > 0) output.push('');
+            output.push(formatSummaryPretty(closedSummaries, 'Recently Closed Epics (last 72h)'));
+          }
+          if (output.length === 0) {
+            output.push('No epics found.');
+          }
+          console.log(output.join('\n'));
         } else {
-          console.log(formatJson(summaries));
+          console.log(formatJson({ open: openSummaries, closed: closedSummaries }));
         }
       } catch (error) {
         outputError(error as Error, pretty);
