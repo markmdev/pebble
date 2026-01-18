@@ -131,6 +131,7 @@ export function closeCommand(program: Command): void {
                 for (const v of result.pendingVerifications || []) {
                   console.log(`  • ${v.id} - ${v.title}`);
                 }
+                console.log(`\nRun: pb verifications ${result.id}`);
               } else {
                 console.log(`✓ ${result.id}`);
                 if (result.unblocked && result.unblocked.length > 0) {
@@ -146,6 +147,7 @@ export function closeCommand(program: Command): void {
                 success: true,
                 status: result.status,
                 ...(result.pendingVerifications && { pendingVerifications: result.pendingVerifications }),
+                ...(result.pendingVerifications && { hint: `pb verifications ${result.id}` }),
                 ...(result.unblocked && { unblocked: result.unblocked }),
               }));
             }
@@ -162,6 +164,7 @@ export function closeCommand(program: Command): void {
                   for (const v of result.pendingVerifications || []) {
                     console.log(`  • ${v.id} - ${v.title}`);
                   }
+                  console.log(`  Run: pb verifications ${result.id}`);
                 } else {
                   console.log(`✓ ${result.id}`);
                   if (result.unblocked && result.unblocked.length > 0) {
@@ -181,6 +184,7 @@ export function closeCommand(program: Command): void {
               status: r.status,
               ...(r.error && { error: r.error }),
               ...(r.pendingVerifications && { pendingVerifications: r.pendingVerifications }),
+              ...(r.pendingVerifications && { hint: `pb verifications ${r.id}` }),
               ...(r.unblocked && { unblocked: r.unblocked }),
             }))));
           }

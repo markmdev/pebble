@@ -17,7 +17,7 @@ import {
   TYPE_BADGE_VARIANTS,
   PRIORITY_DISPLAY_LABELS,
 } from '../../shared/types';
-import { formatRelativeTime } from '../lib/time';
+import { formatRelativeTime } from '../../shared/time';
 import {
   Table,
   TableBody,
@@ -30,7 +30,7 @@ import { Badge } from './ui/badge';
 import { Input } from './ui/input';
 import { Select } from './ui/select';
 import { Button } from './ui/button';
-import { ArrowUpDown, ChevronRight, ChevronDown, FolderSync, Folder, Search, X } from 'lucide-react';
+import { ArrowUpDown, ChevronRight, ChevronDown, FolderSync, Folder, FolderOpen, Search, X } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { getCommonPrefix, getRelativePath } from '../lib/path';
 
@@ -64,6 +64,7 @@ export interface IssueListProps {
 // Extended issue type with subRows for TanStack hierarchy
 interface IssueWithChildren extends Issue {
   subRows?: IssueWithChildren[];
+  _isGroup?: boolean; // Synthetic group row (e.g., "No parent")
 }
 
 // Helper to check if issue has open (unresolved) blockers
@@ -136,7 +137,9 @@ function buildHierarchy(issues: Issue[]): IssueWithChildren[] {
 
   // Build top level (issues without parents or with missing parents)
   // Also exclude verification issues that have a valid target (they're nested under it)
-  const topLevel: IssueWithChildren[] = [];
+  const epicsAndParents: IssueWithChildren[] = [];
+  const orphans: IssueWithChildren[] = [];
+
   for (const issue of issues) {
     // Skip if this issue has a valid parent (it will be nested under parent)
     if (issue.parent && issueMap.has(issue.parent)) {
@@ -146,20 +149,50 @@ function buildHierarchy(issues: Issue[]): IssueWithChildren[] {
     if (issue.type === 'verification' && issue.verifies && issueMap.has(issue.verifies)) {
       continue;
     }
-    topLevel.push(buildIssueWithChildren(issue));
+
+    const builtIssue = buildIssueWithChildren(issue);
+
+    // Epics and issues with children go to top level
+    // Orphans (non-epic, no children) go to "No parent" group
+    if (issue.type === 'epic' || (builtIssue.subRows?.length ?? 0) > 0) {
+      epicsAndParents.push(builtIssue);
+    } else {
+      orphans.push(builtIssue);
+    }
   }
 
-  // Sort top level: issues with children first, then by status
-  return topLevel.sort((a, b) => {
-    // Issues with children first
-    const aHasChildren = (a.subRows?.length ?? 0) > 0;
-    const bHasChildren = (b.subRows?.length ?? 0) > 0;
-    if (aHasChildren !== bHasChildren) {
-      return aHasChildren ? -1 : 1;
-    }
-    // Then by status
+  // Sort epics: by status
+  epicsAndParents.sort((a, b) => {
     return getStatusOrder(a.status) - getStatusOrder(b.status);
   });
+
+  // Sort orphans: by status
+  orphans.sort((a, b) => {
+    return getStatusOrder(a.status) - getStatusOrder(b.status);
+  });
+
+  // Create "No parent" synthetic group if there are orphans
+  if (orphans.length > 0) {
+    const noParentGroup: IssueWithChildren = {
+      id: '__NO_PARENT__',
+      title: 'No parent',
+      type: 'epic', // Use epic type for expandable styling
+      priority: 4,
+      status: 'open',
+      description: '',
+      blockedBy: [],
+      relatedTo: [],
+      comments: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      subRows: orphans,
+      _isGroup: true,
+    };
+    // Put epics first, then the "No parent" group at the end
+    return [...epicsAndParents, noParentGroup];
+  }
+
+  return epicsAndParents;
 }
 
 // Get description of what changed in an event
@@ -401,18 +434,24 @@ export function IssueList({
             title="Select all issues"
           />
         ),
-        cell: ({ row }) => (
-          <input
-            type="checkbox"
-            checked={selectedIds.has(row.original.id)}
-            onChange={(e) => {
-              e.stopPropagation();
-              onToggleSelect?.(row.original.id);
-            }}
-            onClick={(e) => e.stopPropagation()}
-            className="h-4 w-4 rounded border-gray-300 cursor-pointer"
-          />
-        ),
+        cell: ({ row }) => {
+          // Don't show checkbox for synthetic group rows
+          if (row.original._isGroup) {
+            return null;
+          }
+          return (
+            <input
+              type="checkbox"
+              checked={selectedIds.has(row.original.id)}
+              onChange={(e) => {
+                e.stopPropagation();
+                onToggleSelect?.(row.original.id);
+              }}
+              onClick={(e) => e.stopPropagation()}
+              className="h-4 w-4 rounded border-gray-300 cursor-pointer"
+            />
+          );
+        },
         enableSorting: false,
         enableColumnFilter: false,
       },
@@ -430,8 +469,34 @@ export function IssueList({
         cell: ({ row }) => {
           const canExpand = row.getCanExpand();
           const depth = row.depth;
+          const isGroup = row.original._isGroup;
           const sources = row.original._sources;
           const relativePath = sources?.[0] ? getRelativePath(sources[0], sourcePathPrefix) : null;
+
+          // Special rendering for synthetic group rows
+          if (isGroup) {
+            return (
+              <div className="flex items-center">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    row.toggleExpanded();
+                  }}
+                  className="p-0.5 hover:bg-muted rounded mr-1"
+                >
+                  {row.getIsExpanded() ? (
+                    <ChevronDown className="h-4 w-4" />
+                  ) : (
+                    <ChevronRight className="h-4 w-4" />
+                  )}
+                </button>
+                <FolderOpen className="h-4 w-4 mr-1.5 text-muted-foreground" />
+                <span className="text-sm font-medium text-muted-foreground">{row.original.title}</span>
+                <span className="ml-2 text-xs text-muted-foreground">({row.original.subRows?.length ?? 0})</span>
+              </div>
+            );
+          }
+
           return (
             <div style={{ paddingLeft: `${depth * 24}px` }}>
               {/* ID row */}
@@ -493,19 +558,25 @@ export function IssueList({
           </button>
         ),
         cell: ({ row }) => {
+          // Don't show title content for synthetic group rows (shown in ID column)
+          if (row.original._isGroup) {
+            return null;
+          }
           const blockerCount = countOpenBlockers(row.original, issueMap);
           // Count all descendants, separating regular children from verifications
           const countDescendants = (subRows: IssueWithChildren[] | undefined): {
             total: number;
             closed: number;
+            pendingVerification: number;
             verificationTotal: number;
             verificationClosed: number;
           } => {
             if (!subRows || subRows.length === 0) {
-              return { total: 0, closed: 0, verificationTotal: 0, verificationClosed: 0 };
+              return { total: 0, closed: 0, pendingVerification: 0, verificationTotal: 0, verificationClosed: 0 };
             }
             let total = 0;
             let closed = 0;
+            let pendingVerification = 0;
             let verificationTotal = 0;
             let verificationClosed = 0;
             for (const child of subRows) {
@@ -515,17 +586,19 @@ export function IssueList({
               } else {
                 total += 1;
                 if (child.status === 'closed') closed += 1;
+                else if (child.status === 'pending_verification') pendingVerification += 1;
               }
               // Recursively count grandchildren
               const grandchildren = countDescendants(child.subRows);
               total += grandchildren.total;
               closed += grandchildren.closed;
+              pendingVerification += grandchildren.pendingVerification;
               verificationTotal += grandchildren.verificationTotal;
               verificationClosed += grandchildren.verificationClosed;
             }
-            return { total, closed, verificationTotal, verificationClosed };
+            return { total, closed, pendingVerification, verificationTotal, verificationClosed };
           };
-          const { total: childCount, closed: closedCount, verificationTotal, verificationClosed } = countDescendants(row.original.subRows);
+          const { total: childCount, closed: closedCount, pendingVerification: pendingCount, verificationTotal, verificationClosed } = countDescendants(row.original.subRows);
           const allDone = childCount > 0 && closedCount === childCount;
           const allVerified = verificationTotal > 0 && verificationClosed === verificationTotal;
           // Check if this is a verification issue
@@ -568,7 +641,7 @@ export function IssueList({
                     ? 'bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-400'
                     : 'bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-400'
                 }`}>
-                  {closedCount}/{childCount} done
+                  {closedCount}/{childCount} done{pendingCount > 0 && ` (${pendingCount} pending verification)`}
                 </span>
               )}
               {verificationTotal > 0 && (
@@ -593,6 +666,7 @@ export function IssueList({
         accessorKey: 'type',
         header: 'Type',
         cell: ({ row }) => {
+          if (row.original._isGroup) return null;
           const type = row.getValue('type') as keyof typeof TYPE_BADGE_VARIANTS;
           return <Badge variant={TYPE_BADGE_VARIANTS[type]}>{type}</Badge>;
         },
@@ -612,6 +686,7 @@ export function IssueList({
           </button>
         ),
         cell: ({ row }) => {
+          if (row.original._isGroup) return null;
           const priority = row.getValue('priority') as keyof typeof PRIORITY_DISPLAY_LABELS;
           return (
             <span className={priority <= 1 ? 'font-semibold text-red-600' : ''}>
@@ -635,6 +710,7 @@ export function IssueList({
           </button>
         ),
         cell: ({ row }) => {
+          if (row.original._isGroup) return null;
           const status = row.getValue('status') as keyof typeof STATUS_BADGE_VARIANTS;
           return <Badge variant={STATUS_BADGE_VARIANTS[status]}>{status.replace('_', ' ')}</Badge>;
         },
@@ -651,6 +727,7 @@ export function IssueList({
         accessorKey: 'parent',
         header: 'Parent',
         cell: ({ row }) => {
+          if (row.original._isGroup) return null;
           const parent = row.getValue('parent') as string | undefined;
           if (!parent) {
             return <span className="text-muted-foreground">—</span>;
@@ -689,6 +766,7 @@ export function IssueList({
           </button>
         ),
         cell: ({ row }) => {
+          if (row.original._isGroup) return null;
           const latestEvent = latestEventMap.get(row.original.id);
           if (!latestEvent) {
             return <span className="text-muted-foreground text-xs">—</span>;
@@ -929,9 +1007,10 @@ export function IssueList({
           <TableBody>
             {table.getRowModel().rows?.length ? (
               table.getRowModel().rows.map((row) => {
+                const isGroup = row.original._isGroup;
                 const status = row.original.status;
-                const rowHasOpenBlockers = hasOpenBlockers(row.original, issueMap);
-                const statusBorder =
+                const rowHasOpenBlockers = isGroup ? false : hasOpenBlockers(row.original, issueMap);
+                const statusBorder = isGroup ? 'border-l-4 border-l-gray-400' :
                   status === 'in_progress' ? 'border-l-4 border-l-blue-500' :
                   status === 'blocked' || rowHasOpenBlockers ? 'border-l-4 border-l-red-500' :
                   status === 'pending_verification' ? 'border-l-4 border-l-purple-500' :
@@ -941,8 +1020,8 @@ export function IssueList({
                 return (
                 <TableRow
                   key={row.id}
-                  className={`cursor-pointer ${statusBorder} ${isClosedRow ? 'bg-muted/30 opacity-75' : ''}`}
-                  onClick={() => onSelectIssue(row.original)}
+                  className={`${isGroup ? '' : 'cursor-pointer'} ${statusBorder} ${isClosedRow ? 'bg-muted/30 opacity-75' : ''} ${isGroup ? 'bg-muted/50' : ''}`}
+                  onClick={() => !isGroup && onSelectIssue(row.original)}
                 >
                   {row.getVisibleCells().map((cell) => (
                     <TableCell key={cell.id}>

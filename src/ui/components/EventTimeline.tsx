@@ -8,7 +8,7 @@ import { Input } from './ui/input';
 import { Select } from './ui/select';
 import { Badge } from './ui/badge';
 import { Clock, Plus, Edit, XCircle, RefreshCw, MessageSquare, Folder, ChevronRight } from 'lucide-react';
-import { formatRelativeTime } from '../lib/time';
+import { formatRelativeTime } from '../../shared/time';
 import { getCommonPrefix, getRelativePath } from '../lib/path';
 
 interface EventGroup {

@@ -17,56 +17,84 @@ export function depCommand(program: Command): void {
     .command('dep')
     .description('Manage dependencies');
 
-  // dep add <id> <blocker-id>
+  // dep add <id> [blocker-id] --needs <id> --blocks <id>
   dep
-    .command('add <id> <blockerId>')
-    .description('Add a blocking dependency')
-    .action(async (id: string, blockerId: string) => {
+    .command('add <id> [blockerId]')
+    .description('Add a blocking dependency. Use --needs or --blocks for self-documenting syntax.')
+    .option('--needs <id>', 'Issue that must be completed first (first arg needs this)')
+    .option('--blocks <id>', 'Issue that this blocks (first arg blocks this)')
+    .action(async (id: string, blockerId: string | undefined, options: { needs?: string; blocks?: string }) => {
       const pretty = program.opts().pretty ?? false;
 
       try {
-        const pebbleDir = getOrCreatePebbleDir();
-        const resolvedId = resolveId(id);
-        const resolvedBlockerId = resolveId(blockerId);
-
-        const issue = getIssue(resolvedId);
-        if (!issue) {
-          throw new Error(`Issue not found: ${id}`);
+        // Validate usage: cannot combine flags with each other or with positional
+        if (options.needs && options.blocks) {
+          throw new Error('Cannot use both --needs and --blocks');
+        }
+        if (blockerId && (options.needs || options.blocks)) {
+          throw new Error('Cannot combine positional blockerId with --needs or --blocks');
+        }
+        if (!blockerId && !options.needs && !options.blocks) {
+          throw new Error('Must provide blockerId, --needs <id>, or --blocks <id>');
         }
 
-        const blocker = getIssue(resolvedBlockerId);
+        const pebbleDir = getOrCreatePebbleDir();
+
+        // Determine blocked and blocker based on usage:
+        // pb dep add X Y          => X is blocked by Y
+        // pb dep add X --needs Y  => X is blocked by Y (same as above)
+        // pb dep add X --blocks Y => Y is blocked by X (inverted)
+        let blockedId: string;
+        let blockerIdResolved: string;
+
+        if (options.blocks) {
+          // X blocks Y => Y is blocked by X
+          blockedId = resolveId(options.blocks);
+          blockerIdResolved = resolveId(id);
+        } else {
+          // X needs Y or X Y => X is blocked by Y
+          blockedId = resolveId(id);
+          blockerIdResolved = resolveId(options.needs || blockerId!);
+        }
+
+        const issue = getIssue(blockedId);
+        if (!issue) {
+          throw new Error(`Issue not found: ${blockedId}`);
+        }
+
+        const blocker = getIssue(blockerIdResolved);
         if (!blocker) {
-          throw new Error(`Blocker issue not found: ${blockerId}`);
+          throw new Error(`Blocker issue not found: ${blockerIdResolved}`);
         }
 
         // Check for self-reference
-        if (resolvedId === resolvedBlockerId) {
+        if (blockedId === blockerIdResolved) {
           throw new Error('Cannot add self as blocker');
         }
 
         // Check for existing dependency
-        if (issue.blockedBy.includes(resolvedBlockerId)) {
-          throw new Error(`Dependency already exists: ${resolvedId} is blocked by ${resolvedBlockerId}`);
+        if (issue.blockedBy.includes(blockerIdResolved)) {
+          throw new Error(`Dependency already exists: ${blockedId} is blocked by ${blockerIdResolved}`);
         }
 
         // Check for cycles
-        if (detectCycle(resolvedId, resolvedBlockerId)) {
+        if (detectCycle(blockedId, blockerIdResolved)) {
           throw new Error(`Adding this dependency would create a cycle`);
         }
 
         // Add the dependency
         const event: UpdateEvent = {
           type: 'update',
-          issueId: resolvedId,
+          issueId: blockedId,
           timestamp: new Date().toISOString(),
           data: {
-            blockedBy: [...issue.blockedBy, resolvedBlockerId],
+            blockedBy: [...issue.blockedBy, blockerIdResolved],
           },
         };
 
         appendEvent(event, pebbleDir);
 
-        outputMutationSuccess(resolvedId, pretty);
+        outputMutationSuccess(blockedId, pretty);
       } catch (error) {
         outputError(error as Error, pretty);
       }
@@ -278,7 +306,7 @@ export function depCommand(program: Command): void {
   // dep tree <id>
   dep
     .command('tree <id>')
-    .description('Show dependency tree')
+    .description('Show issue tree (children, verifications, and full hierarchy)')
     .action(async (id: string) => {
       const pretty = program.opts().pretty ?? false;
 
@@ -293,11 +321,10 @@ export function depCommand(program: Command): void {
         // Build tree structure - compute state once
         const events = readEvents();
         const state = computeState(events);
-        const visited = new Set<string>();
-        const tree = buildDepTree(resolvedId, visited, 0, state);
+        const tree = buildIssueTree(resolvedId, state);
 
         if (pretty) {
-          console.log(formatDepTree(tree));
+          console.log(formatIssueTreePretty(tree));
         } else {
           console.log(formatJson(tree));
         }
@@ -307,72 +334,127 @@ export function depCommand(program: Command): void {
     });
 }
 
-interface TreeNode {
+interface IssueTreeNode {
   id: string;
   title: string;
+  type: string;
+  priority: number;
   status: string;
-  depth: number;
-  blockedBy: TreeNode[];
+  isTarget?: boolean; // The issue that was requested
+  childrenCount: number;
+  children?: IssueTreeNode[];
 }
 
-function buildDepTree(
+function buildIssueTree(
   issueId: string,
-  visited: Set<string>,
-  depth: number,
   state: Map<string, Issue>
-): TreeNode | null {
-  if (visited.has(issueId)) {
-    return null; // Prevent infinite loops
-  }
-  visited.add(issueId);
-
+): IssueTreeNode | null {
   const issue = state.get(issueId);
   if (!issue) {
     return null;
   }
 
-  const blockedBy: TreeNode[] = [];
-  for (const blockerId of issue.blockedBy) {
-    const child = buildDepTree(blockerId, visited, depth + 1, state);
-    if (child) {
-      blockedBy.push(child);
+  // Build children recursively
+  const buildChildren = (id: string, visited: Set<string>): IssueTreeNode[] => {
+    const children: IssueTreeNode[] = [];
+    for (const [, i] of state) {
+      if ((i.parent === id || i.verifies === id) && !visited.has(i.id)) {
+        visited.add(i.id);
+        const nodeChildren = buildChildren(i.id, visited);
+        children.push({
+          id: i.id,
+          title: i.title,
+          type: i.type,
+          priority: i.priority,
+          status: i.status,
+          isTarget: i.id === issueId,
+          childrenCount: nodeChildren.length,
+          ...(nodeChildren.length > 0 && { children: nodeChildren }),
+        });
+      }
     }
-  }
+    return children;
+  };
 
-  return {
+  // Build the target node with its children
+  const visited = new Set<string>([issueId]);
+  const targetChildren = buildChildren(issueId, visited);
+  const targetNode: IssueTreeNode = {
     id: issue.id,
     title: issue.title,
+    type: issue.type,
+    priority: issue.priority,
     status: issue.status,
-    depth,
-    blockedBy,
+    isTarget: true,
+    childrenCount: targetChildren.length,
+    ...(targetChildren.length > 0 && { children: targetChildren }),
   };
+
+  // Walk up the parent chain to find the root
+  let currentNode = targetNode;
+  let currentIssue = issue;
+
+  while (currentIssue.parent) {
+    const parentIssue = state.get(currentIssue.parent);
+    if (!parentIssue) break;
+
+    // Create parent node with current as child, plus any siblings
+    const siblings: IssueTreeNode[] = [];
+    for (const [, i] of state) {
+      if ((i.parent === parentIssue.id || i.verifies === parentIssue.id) && i.id !== currentIssue.id) {
+        // Add sibling (but don't expand its children to keep output focused)
+        siblings.push({
+          id: i.id,
+          title: i.title,
+          type: i.type,
+          priority: i.priority,
+          status: i.status,
+          childrenCount: 0,
+        });
+      }
+    }
+
+    const parentNodeChildren = [currentNode, ...siblings];
+    const parentNode: IssueTreeNode = {
+      id: parentIssue.id,
+      title: parentIssue.title,
+      type: parentIssue.type,
+      priority: parentIssue.priority,
+      status: parentIssue.status,
+      childrenCount: parentNodeChildren.length,
+      children: parentNodeChildren,
+    };
+
+    currentNode = parentNode;
+    currentIssue = parentIssue;
+  }
+
+  return currentNode;
 }
 
-function formatDepTree(node: TreeNode | null, prefix: string = '', isRoot: boolean = true): string {
+function formatIssueTreePretty(node: IssueTreeNode | null): string {
   if (!node) {
-    return '';
+    return 'Issue not found.';
   }
 
   const lines: string[] = [];
-  const statusIcon = node.status === 'closed' ? '✓' : '○';
 
-  if (isRoot) {
-    lines.push(`${statusIcon} ${node.id} - ${node.title}`);
-  }
+  const formatNode = (n: IssueTreeNode, prefix: string, isLast: boolean, isRoot: boolean): void => {
+    const connector = isRoot ? '' : isLast ? '└─ ' : '├─ ';
+    const statusIcon = n.status === 'closed' ? '✓' : n.status === 'in_progress' ? '▶' : n.status === 'pending_verification' ? '⏳' : '○';
+    const marker = n.isTarget ? ' ◀' : '';
 
-  for (let i = 0; i < node.blockedBy.length; i++) {
-    const child = node.blockedBy[i];
-    const isLast = i === node.blockedBy.length - 1;
-    const connector = isLast ? '└─ ' : '├─ ';
-    const childPrefix = prefix + (isLast ? '   ' : '│  ');
+    lines.push(`${prefix}${connector}${statusIcon} ${n.id}: ${n.title} [${n.type}] P${n.priority}${marker}`);
 
-    const childStatusIcon = child.status === 'closed' ? '✓' : '○';
-    lines.push(`${prefix}${connector}${childStatusIcon} ${child.id} - ${child.title}`);
+    const children = n.children ?? [];
+    const childPrefix = isRoot ? '' : prefix + (isLast ? '   ' : '│  ');
+    children.forEach((child, index) => {
+      const childIsLast = index === children.length - 1;
+      formatNode(child, childPrefix, childIsLast, false);
+    });
+  };
 
-    if (child.blockedBy.length > 0) {
-      lines.push(formatDepTree(child, childPrefix, false));
-    }
-  }
+  formatNode(node, '', true, true);
 
   return lines.join('\n');
 }

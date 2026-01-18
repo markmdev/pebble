@@ -78,8 +78,8 @@ export function searchCommand(program: Command): void {
           if (aInTitle && !bInTitle) return -1;
           if (!aInTitle && bInTitle) return 1;
 
-          // Secondary sort: most recently updated first
-          return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+          // Secondary sort: newest first
+          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
         });
 
         // Apply limit

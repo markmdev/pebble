@@ -31,6 +31,7 @@ program
 
 // Global options
 program.option('-P, --pretty', 'Human-readable output (default: JSON)');
+program.option('--json', 'JSON output (this is the default, flag not needed)');
 
 // Register all commands
 createCommand(program);

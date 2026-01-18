@@ -54,7 +54,7 @@ import {
   Link2,
 } from 'lucide-react';
 import { EventTimeline } from './EventTimeline';
-import { formatRelativeTime } from '../lib/time';
+import { formatRelativeTime } from '../../shared/time';
 import { sortByStatus, sortByDependencies } from '../lib/sort';
 import { getCommonPrefix, getRelativePath } from '../lib/path';
 import {
